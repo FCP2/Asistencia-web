@@ -1,0 +1,26 @@
+.card-inv {
+  border:1px solid #e7e7ea;
+  border-radius:16px;
+  background:#fff;
+  transition:box-shadow .2s;
+}
+.card-inv:hover {
+  box-shadow: 0 6px 28px rgba(16,24,40,.06);
+}
+.card-inv .hdr { 
+  font-weight:600; 
+  font-size:1rem; 
+}
+.badge-soft { 
+  background:#f1f3f5; 
+  color:#333; 
+  border-radius:999px; 
+  padding:.15rem .5rem; 
+}
+/* KPI cards */
+.stat {
+  background:#fff;
+  border:1px solid #e7e7ea;
+  border-radius:12px;
+  padding:.75rem 1rem;
+}

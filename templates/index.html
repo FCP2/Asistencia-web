@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- KPIs -->
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-3"><div class="stat"><div class="text-muted small">Pendientes</div><div class="fs-4 fw-semibold" id="kpiPend">0</div></div></div>
+  <div class="col-6 col-md-3"><div class="stat"><div class="text-muted small">Confirmadas</div><div class="fs-4 fw-semibold" id="kpiConf">0</div></div></div>
+  <div class="col-6 col-md-3"><div class="stat"><div class="text-muted small">Sustituidas</div><div class="fs-4 fw-semibold" id="kpiSubs">0</div></div></div>
+  <div class="col-6 col-md-3"><div class="stat"><div class="text-muted small">Canceladas</div><div class="fs-4 fw-semibold" id="kpiCanc">0</div></div></div>
+</div>
+
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+  <div class="btn-group" role="group" aria-label="Filtros">
+    <button class="btn btn-outline-secondary active" data-status="">Todas</button>
+    <button class="btn btn-outline-secondary" data-status="Pendiente">Pendientes</button>
+    <button class="btn btn-outline-secondary" data-status="Confirmado">Confirmadas</button>
+    <button class="btn btn-outline-secondary" data-status="Sustituido">Sustituidas</button>
+    <button class="btn btn-outline-secondary" data-status="Cancelado">Canceladas</button>
+  </div>
+  <button class="btn btn-primary ms-auto" data-bs-toggle="modal" data-bs-target="#modalCreate">Nueva invitación</button>
+</div>
+
+<div id="cards" class="row g-3"></div>
+
+<!-- Modal: Gestionar -->
+<div class="modal fade" id="modalAssign" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Gestionar invitación</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+            <div class="mb-2">
+                <label class="form-label">Persona</label>
+                <select id="selPersona" class="form-select"></select>
+            </div>
+            <hr class="my-3">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <strong class="me-auto">¿No está en la lista?</strong>
+                <button class="btn btn-sm btn-outline-primary" 
+                        type="button" data-bs-toggle="collapse" data-bs-target="#newPerson">
+                    Agregar nueva persona
+                </button>
+            </div>
+
+            <div class="collapse" id="newPerson">
+                <div class="border rounded p-2">
+                    <div class="row g-2">
+                    <div class="col-12">
+                        <label class="form-label">Nombre</label>
+                        <input id="npNombre" class="form-control" placeholder="Nombre completo">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Cargo</label>
+                        <input id="npCargo" class="form-control" placeholder="Cargo">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Teléfono</label>
+                        <input id="npTelefono" class="form-control" placeholder="10 dígitos">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Correo</label>
+                        <input id="npCorreo" type="email" class="form-control" placeholder="correo@dominio.com">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Secretaría/Unidad</label>
+                        <input id="npUnidad" class="form-control" placeholder="Secretaría o Unidad">
+                    </div>
+                    </div>
+                    <div class="mt-2 d-flex justify-content-end gap-2">
+                    <button id="btnCancelarPersona" class="btn btn-outline-secondary btn-sm">Cancelar</button>
+                    <button id="btnGuardarPersona" class="btn btn-success btn-sm">Guardar persona</button>
+                    </div>
+                </div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Cargo</label>
+                <input id="inpRol" class="form-control" placeholder="" readonly>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Comentario / Motivo</label>
+                <textarea id="inpComentario" class="form-control" rows="2"></textarea>
+            </div>
+            <div class="small text-muted" id="assignMeta"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnAsignar" class="btn btn-primary">Asignar</button>
+        <button id="btnSustituir" class="btn btn-outline-warning">Sustituir</button>
+        <button id="btnCancelar" class="btn btn-outline-danger">Cancelar</button>
+        <button id="btnReactivar" class="btn btn-outline-secondary">Reactivar</button>
+        <button id="btnEliminar" class="btn btn-danger ms-auto">Eliminar</button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Modal: Detalles -->
+<div class="modal fade" id="modalDetails" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Detalles de la invitación</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="detailsBody" class="small"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Crear invitación -->
+<div class="modal fade" id="modalCreate" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Nueva invitación</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label">Fecha</label>
+            <input id="cFecha" type="date" class="form-control">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Hora</label>
+            <input id="cHora" type="time" class="form-control">
+          </div>
+        </div>
+        <div class="mt-2">
+          <label class="form-label">Evento</label>
+          <input id="cEvento" class="form-control">
+        </div>
+        <div class="mt-2">
+            <label class="form-label">Quien Convoca</label>
+            <select id="cConvocaCargo" class="form-select">
+                <option value="">-- Seleccione --</option>
+                <option>Diputadas y Diputados</option>
+                <option>Presidentas y Presidentes Municipales</option>
+            </select>
+        </div>
+        <div class="mt-2">
+          <label class="form-label">Nombre</label>
+          <input id="cConvoca" class="form-control">
+        </div>
+        <div class="mt-2">
+            <label class="form-label">Partido Político</label>
+            <input id="cPartido" class="form-control" placeholder="Ej. MORENA, PRI, PAN…">
+        </div>
+        <div class="mt-2">
+          <label class="form-label">Municipio</label>
+          <input id="cMuni" class="form-control">
+        </div>
+        <div class="mt-2">
+          <label class="form-label">Lugar del Evento</label>
+          <input id="cLugar" class="form-control">
+        </div>
+        <div class="mt-2">
+          <label class="form-label">Observaciones</label>
+          <textarea id="cObs" class="form-control" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCrear" class="btn btn-primary">Crear</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

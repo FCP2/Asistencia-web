@@ -101,6 +101,7 @@ function card(inv){
         ${est}
       </div>
       <div class="text-muted small">${inv["Fecha"]||""} ${inv["Hora"]||""} • ${inv["Convoca"]||""}</div>
+      <div class="text-muted small">${inv["Municipio/Dependencia"]||""}</div>
       <div class="text-muted small">${inv["Lugar"]||""}</div>
       <div class="mt-2">${asignado}</div>
       <div class="mt-auto d-flex gap-2 pt-2">
@@ -316,6 +317,7 @@ document.addEventListener('click', async (e)=>{
       `<div><strong>Convoca:</strong> ${inv.Convoca||'—'}</div>`,
       `<div><strong>Partido Político:</strong> ${inv["Partido Político"]||'—'}</div>`,
       `<div><strong>Fecha/Hora:</strong> ${inv.Fecha||''} ${inv.Hora||''}</div>`,
+      `<div><strong>Municipio:</strong> ${inv["Municipio/Dependencia"]||'—'}</div>`,
       `<div><strong>Lugar:</strong> ${inv.Lugar||'—'}</div>`,
       `<div><strong>Estatus:</strong> ${inv.Estatus||'—'}</div>`,
       `<div><strong>Asiste:</strong> ${inv["Asignado A"]||'—'} (${inv.Rol||'—'})</div>`,

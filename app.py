@@ -393,7 +393,7 @@ def api_person_create():
 #  Run
 # =========================
 @app.get("/health")
-def health();
+def health():
     return {"ok": True}
 if __name__ == "__main__":
     # No hay warming de Sheets; BD ya está lista

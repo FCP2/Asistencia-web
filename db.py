@@ -9,22 +9,26 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 # ============================
 # CONFIG
-# ============================
+raw = os.getenv("DB_URL")  # En Render: postgresql://USER:PASS@HOST:5432/DB?sslmode=require
+if not raw:
+    raise RuntimeError("DB_URL no definida")
 
-# Si existe la variable de entorno DB_URL la toma, si no usa la de Render fija
-DB_URL = os.getenv("DB_URL")
+# Fuerza el driver psycopg3 en la URL de SQLAlchemy
+# (Render te da 'postgresql://...'; lo convertimos a 'postgresql+psycopg://...')
+if raw.startswith("postgresql://"):
+    DB_URL = "postgresql+psycopg://" + raw.split("://", 1)[1]
+else:
+    DB_URL = raw
 
-# Crear engine con conexión a Render PostgreSQL
 engine = create_engine(
     DB_URL,
     pool_pre_ping=True,
-    pool_size=3,      # Render free tier
-    max_overflow=2,   # Render free tier
+    pool_size=3,
+    max_overflow=2,
     pool_recycle=1800,
     future=True,
 )
 
-# Session y Base
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
 

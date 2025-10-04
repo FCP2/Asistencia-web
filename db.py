@@ -1,23 +1,24 @@
 # db.py
 import os
 from datetime import datetime
-from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session, relationship
 from sqlalchemy import (
     create_engine, Column, String, Integer, Date, Time, Text,
-    Boolean, DateTime
+    Boolean, DateTime, ForeignKey, Index
 )
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 # ============================
-# CONFIG
-raw = os.getenv("DB_URL")  # En Render: postgresql://USER:PASS@HOST:5432/DB?sslmode=require
+# CONFIG: toma DATABASE_URL (Render) o DB_URL como alias
+raw = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
 if not raw:
-    raise RuntimeError("DB_URL no definida")
+    raise RuntimeError("DATABASE_URL/DB_URL no definida")
 
 # Fuerza el driver psycopg3 en la URL de SQLAlchemy
-# (Render te da 'postgresql://...'; lo convertimos a 'postgresql+psycopg://...')
-if raw.startswith("postgresql://"):
-    DB_URL = "postgresql+psycopg://" + raw.split("://", 1)[1]
+# postgres://... | postgresql://...  -> postgresql+psycopg://...
+if raw.startswith("postgres://"):
+    DB_URL = raw.replace("postgres://", "postgresql+psycopg://", 1)
+elif raw.startswith("postgresql://"):
+    DB_URL = raw.replace("postgresql://", "postgresql+psycopg://", 1)
 else:
     DB_URL = raw
 
@@ -27,13 +28,11 @@ engine = create_engine(
     pool_size=3,
     max_overflow=2,
     pool_recycle=1800,
-    future=True,
+    connect_args={"sslmode": "require"},  # TLS seguro para Render PG
 )
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 Base = declarative_base()
-
-
 # -------------------------------------------------------------------
 # MODELOS
 # -------------------------------------------------------------------

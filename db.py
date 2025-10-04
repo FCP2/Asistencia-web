@@ -32,68 +32,124 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
 
-# ============================
+
+# -------------------------------------------------------------------
 # MODELOS
-# ============================
+# -------------------------------------------------------------------
 
 class Persona(Base):
     __tablename__ = "personas"
-    id = Column(Integer, primary_key=True)
-    nombre = Column(String, unique=True, nullable=False)
-    cargo = Column(String, nullable=False)
-    telefono = Column(String(20))
-    correo = Column(String)
+
+    id            = Column(Integer, primary_key=True)
+    nombre        = Column(String, nullable=False, index=True)
+    cargo         = Column(String)
+    telefono      = Column(String)
+    correo        = Column(String)
     unidad_region = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    activo        = Column(Boolean, default=True)
+
+    # relación con invitaciones (1:N)
+    invitaciones  = relationship("Invitacion", back_populates="persona", lazy="selectin")
+
+    __table_args__ = (
+        Index("idx_personas_nombre", "nombre"),
+    )
 
 
 class Invitacion(Base):
     __tablename__ = "invitaciones"
-    id = Column(String, primary_key=True)  # UUID texto
-    fecha = Column(Date, nullable=False)
-    hora = Column(Time, nullable=False)
-    evento = Column(String, nullable=False)
-    convoca_cargo = Column(String, nullable=False)
-    convoca = Column(String, nullable=False)
-    partido_politico = Column(String, nullable=False)
-    municipio = Column(String, nullable=False)
-    lugar = Column(String, nullable=False)
-    estatus = Column(String, default="Pendiente")
-    asignado_a = Column(String)   # nombre texto (luego podemos FK)
-    rol = Column(String)
-    observaciones = Column(Text)
-    fecha_asignacion = Column(DateTime, nullable=True)
-    ultima_modificacion = Column(DateTime, default=datetime.utcnow)
-    modificado_por = Column(String, default="webapp")
 
+    id                   = Column(Integer, primary_key=True)
 
-class Historial(Base):
-    __tablename__ = "historial"
-    id = Column(Integer, primary_key=True)
-    ts = Column(DateTime, default=datetime.utcnow)
-    usuario = Column(String)
-    accion = Column(String)
-    invitacion_id = Column(String)  # FK lógica
-    campo = Column(String)
-    valor_anterior = Column(Text)
-    valor_nuevo = Column(Text)
-    comentario = Column(Text)
+    # Datos del evento
+    fecha                = Column(Date)        # para inputs/queries
+    hora                 = Column(Time)        # HH:MM
+    evento               = Column(String, nullable=False)
+    convoca_cargo        = Column(String)      # Diputado(a), Presidente(a), etc.
+    convoca              = Column(String)      # nombre de quien convoca
+    partido_politico     = Column(String)
+    municipio            = Column(Text)        # "Municipio/Dependencia"
+    lugar                = Column(Text)
+
+    # Estado/seguimiento
+    estatus              = Column(String, default="Pendiente")   # Pendiente/Confirmado/Sustituido/Cancelado
+    asignado_a           = Column(String)                         # redundante (nombre para tarjetas/reportes)
+    rol                  = Column(String)
+    observaciones        = Column(Text)
+
+    fecha_asignacion     = Column(DateTime)
+    ultima_modificacion  = Column(DateTime, default=datetime.utcnow)
+    modificado_por       = Column(String)
+
+    # Relación con Persona (NUEVO)
+    persona_id           = Column(Integer, ForeignKey("personas.id", ondelete="SET NULL"), nullable=True)
+    persona              = relationship("Persona", back_populates="invitaciones", lazy="joined")
+
+    # Archivo adjunto (PDF/JPG/PNG)
+    archivo_url          = Column(Text)        # URL pública o ruta persistente (S3/Supabase/…)
+    archivo_nombre       = Column(Text)        # nombre original
+    archivo_mime         = Column(Text)        # application/pdf, image/jpeg, etc.
+    archivo_tamano       = Column(Integer)     # bytes
+    archivo_ts           = Column(DateTime)    # cuándo se subió
+
+    __table_args__ = (
+        Index("idx_invitaciones_estatus", "estatus"),
+        Index("idx_invitaciones_fecha", "fecha"),
+        Index("idx_invitaciones_persona", "persona_id"),
+    )
 
 
 class Notificacion(Base):
     __tablename__ = "notificaciones"
-    id = Column(Integer, primary_key=True)
-    ts = Column(DateTime, default=datetime.utcnow)
-    invitacion_id = Column(String)
-    evento = Column(String)
-    convoca = Column(String)
-    estatus = Column(String)
+
+    id                = Column(Integer, primary_key=True)
+    ts                = Column(DateTime, default=datetime.utcnow)
+
+    # vínculo lógico a Invitacion (guardado como texto por compatibilidad)
+    invitacion_id     = Column(String, index=True)
+
+    # Snapshot principal
+    evento            = Column(String)
+    convoca           = Column(String)
+    estatus           = Column(String)
     asignado_a_nombre = Column(String)
-    rol = Column(String)
-    campo = Column(String)
-    valor_anterior = Column(Text)
-    valor_nuevo = Column(Text)
-    comentario = Column(Text)
-    enviado = Column(Boolean, default=False)
-    enviado_ts = Column(DateTime, nullable=True)
+    rol               = Column(String)
+    campo             = Column(String)    # "Estatus", "Asignado A", "Rol", etc.
+    valor_anterior    = Column(Text)
+    valor_nuevo       = Column(Text)
+    comentario        = Column(Text)
+
+    # NUEVOS snapshot desde invitaciones
+    fecha             = Column(Date)      # 👈 snapshot de la invitación
+    hora              = Column(Time)      # 👈
+    municipio         = Column(Text)      # 👈
+    lugar             = Column(Text)      # 👈
+
+    # Envío del bot
+    enviado           = Column(Boolean, default=False)
+    enviado_ts        = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_notif_enviado", "enviado"),
+        Index("idx_notif_ts", "ts"),
+        Index("idx_notif_inv_id", "invitacion_id"),
+    )
+
+
+# -------------------------------------------------------------------
+# Sugerencias de índices/constraints adicionales (opcionales)
+# -------------------------------------------------------------------
+# 1) Anti “doble booking”: misma persona + misma fecha + misma hora para estados activos.
+#    Esto es un índice único parcial en SQL (no se define aquí automáticamente).
+#
+#   CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_persona_fecha_hora
+#   ON invitaciones (persona_id, fecha, hora)
+#   WHERE estatus IN ('Confirmado','Sustituido');
+#
+# 2) Si en algún momento manejas intervalos (inicio/fin), conviene EXCLUDE USING gist.
+# -------------------------------------------------------------------
+
+__all__ = [
+    "engine", "SessionLocal", "Base",
+    "Persona", "Invitacion", "Notificacion",
+]

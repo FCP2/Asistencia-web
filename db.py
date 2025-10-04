@@ -1,6 +1,7 @@
 # db.py
 import os
 from datetime import datetime
+from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session, relationship
 from sqlalchemy import (
     create_engine, Column, String, Integer, Date, Time, Text,
     Boolean, DateTime

@@ -5,7 +5,13 @@ from flask import Flask, render_template, request, jsonify, make_response
 from sqlalchemy import select, update, delete, or_
 from sqlalchemy.exc import SQLAlchemyError
 from db import SessionLocal, Persona, Invitacion, Historial, Notificacion
+from datetime import date, time as dtime
+#formatear dia
+def fmt_date(d: date | None) -> str:
+    return d.strftime("%d/%m/%y") if d else ""
 
+def fmt_time(t: dtime | None) -> str:
+    return t.strftime("%H:%M") if t else ""
 # =========================
 #  Config / util
 # =========================
@@ -21,8 +27,10 @@ def now_str():
 def inv_to_dict(inv: Invitacion):
     return {
         "ID": inv.id,
-        "Fecha": inv.fecha.isoformat() if inv.fecha else "",
-        "Hora": inv.hora.strftime("%H:%M") if inv.hora else "",
+        "Fecha": inv.fecha.isoformat() if inv.fecha else None,   # crudo (ISO)
+        "Hora": inv.hora.isoformat(timespec="minutes") if inv.hora else None,  # crudo
+        "FechaFmt": fmt_date(inv.fecha),   # 👈 formateado dd/mm/yy
+        "HoraFmt": fmt_time(inv.hora),     # 👈 formateado HH:MM
         "Evento": inv.evento or "",
         "Convoca Cargo": inv.convoca_cargo or "",
         "Convoca": inv.convoca or "",
@@ -73,6 +81,13 @@ def add_notif(db, inv: Invitacion, campo, old_val, new_val, comentario):
         comentario=comentario or "",
         enviado=False
     ))
+    
+ # --------- Editar persona e invitacion ----------
+def log_field_change(db, inv, campo, old_val, new_val, comentario="Edición de invitación"):
+    if (old_val or "") != (new_val or ""):
+        add_hist(db, "EDITAR", inv.id, campo, old_val, new_val, comentario)
+        # Notificación snapshot (igual que lo haces en asignar/estatus)
+        add_notif(db, inv, campo, old_val, new_val, comentario)
 
 # =========================
 #  Flask
@@ -86,19 +101,36 @@ def home():
 # --------- Catálogo (personas) ----------
 @app.get("/api/catalog")
 def api_catalog():
+    """
+    Devuelve el catálogo completo de personas para poblar el <select>.
+    Formato:
+    [
+      {"ID": 1, "Nombre":"...", "Cargo":"...", "Teléfono":"...", "Correo":"...", "Unidad/Región":"..."},
+      ...
+    ]
+    """
     db = SessionLocal()
     try:
-        personas = db.execute(select(Persona).where(Persona.nombre != "") \
-                              .order_by(Persona.nombre.asc())).scalars().all()
+        personas = (
+            db.query(Persona)
+              .filter(Persona.nombre != "")
+              .order_by(Persona.nombre.asc())
+              .all()
+        )
         rows = [{
+            "ID": p.id,
             "Nombre": p.nombre,
             "Cargo": p.cargo or "",
             "Teléfono": p.telefono or "",
             "Correo": p.correo or "",
             "Unidad/Región": p.unidad_region or ""
         } for p in personas]
-        resp = make_response(jsonify(rows))
-        resp.headers["Cache-Control"] = "public, max-age=10"
+
+        # sin caché para que el front siempre vea lo último
+        resp = jsonify(rows)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
         return resp
     finally:
         db.close()
@@ -167,12 +199,13 @@ def api_create():
 @app.post("/api/assign")
 def api_assign():
     data = request.get_json() or {}
-    inv_id   = data.get("id")
-    asignado = (data.get("asignado") or "").strip()
-    rol      = (data.get("rol") or "").strip()
+    inv_id     = data.get("id")
+    persona_id = data.get("persona_id")
+    rol_in     = (data.get("rol") or "").strip()  # opcional: si lo mandas, sobrescribe cargo
     comentario = (data.get("comentario") or "").strip()
-    if not inv_id or not asignado or not rol:
-        return jsonify({"ok": False, "error": "Faltan campos"}), 400
+
+    if not inv_id or not persona_id:
+        return jsonify({"ok": False, "error": "Faltan campos: id, persona_id"}), 400
 
     db = SessionLocal()
     try:
@@ -180,26 +213,34 @@ def api_assign():
         if not inv:
             return jsonify({"ok": False, "error": "ID no encontrado"}), 404
 
+        p = db.get(Persona, int(persona_id))
+        if not p:
+            return jsonify({"ok": False, "error": "Persona no encontrada"}), 404
+
         prev_estatus, prev_asignado, prev_rol = inv.estatus, inv.asignado_a, inv.rol
 
-        inv.asignado_a = asignado
-        inv.rol = rol
+        inv.asignado_a = p.nombre
+        inv.rol = rol_in if rol_in else (p.cargo or "")
         inv.estatus = "Confirmado"
-        inv.observaciones = comentario or inv.observaciones
+        if comentario:
+            inv.observaciones = (inv.observaciones or "")
+            if inv.observaciones:
+                inv.observaciones += " | "
+            inv.observaciones += comentario
         inv.fecha_asignacion = now_aware()
         inv.ultima_modificacion = now_aware()
         inv.modificado_por = "webapp"
 
-        add_hist(db, "ASIGNAR", inv_id, "Asignado A", prev_asignado, asignado, comentario)
+        add_hist(db, "ASIGNAR", inv_id, "Asignado A", prev_asignado, inv.asignado_a, comentario)
         if prev_estatus != "Confirmado":
             add_hist(db, "ASIGNAR", inv_id, "Estatus", prev_estatus, "Confirmado", comentario)
-        if (prev_rol or "") != rol:
-            add_hist(db, "ASIGNAR", inv_id, "Rol", prev_rol, rol, comentario)
+        if (prev_rol or "") != inv.rol:
+            add_hist(db, "ASIGNAR", inv_id, "Rol", prev_rol, inv.rol, comentario)
 
-        add_notif(db, inv, "Asignado A", prev_asignado, asignado, comentario)
+        add_notif(db, inv, "Asignado A", prev_asignado, inv.asignado_a, comentario)
         db.commit()
         return jsonify({"ok": True})
-    except SQLAlchemyError as e:
+    except Exception as e:
         db.rollback()
         return jsonify({"ok": False, "error": str(e)})
     finally:
@@ -209,13 +250,13 @@ def api_assign():
 @app.post("/api/reassign")
 def api_reassign():
     data = request.get_json() or {}
-    inv_id = data.get("id")
-    nuevo  = (data.get("nuevo") or "").strip()
-    rol    = (data.get("rol") or "").strip()
+    inv_id     = data.get("id")
+    persona_id = data.get("persona_id")
+    rol_in     = (data.get("rol") or "").strip()
     comentario = (data.get("comentario") or "Sustitución por instrucción").strip()
 
-    if not inv_id or not nuevo:
-        return jsonify({"ok": False, "error": "Faltan campos"}), 400
+    if not inv_id or not persona_id:
+        return jsonify({"ok": False, "error": "Faltan campos: id, persona_id"}), 400
 
     db = SessionLocal()
     try:
@@ -223,25 +264,29 @@ def api_reassign():
         if not inv:
             return jsonify({"ok": False, "error": "ID no encontrado"}), 404
 
+        p = db.get(Persona, int(persona_id))
+        if not p:
+            return jsonify({"ok": False, "error": "Persona no encontrada"}), 404
+
         prev_asignado, prev_estatus, prev_rol = inv.asignado_a, inv.estatus, inv.rol
 
-        inv.asignado_a = nuevo
-        inv.rol = rol or prev_rol
+        inv.asignado_a = p.nombre
+        inv.rol = rol_in if rol_in else (p.cargo or "")
         inv.estatus = "Sustituido"
         inv.ultima_modificacion = now_aware()
         inv.modificado_por = "webapp"
         inv.fecha_asignacion = inv.fecha_asignacion or now_aware()
 
-        add_hist(db, "SUSTITUIR", inv_id, "Asignado A", prev_asignado, nuevo, comentario)
+        add_hist(db, "SUSTITUIR", inv_id, "Asignado A", prev_asignado, inv.asignado_a, comentario)
         if prev_estatus != "Sustituido":
             add_hist(db, "SUSTITUIR", inv_id, "Estatus", prev_estatus, "Sustituido", comentario)
-        if (prev_rol or "") != (rol or prev_rol):
-            add_hist(db, "SUSTITUIR", inv_id, "Rol", prev_rol, rol or prev_rol, comentario)
+        if (prev_rol or "") != inv.rol:
+            add_hist(db, "SUSTITUIR", inv_id, "Rol", prev_rol, inv.rol, comentario)
 
-        add_notif(db, inv, "Asignado A", prev_asignado, nuevo, comentario)
+        add_notif(db, inv, "Asignado A", prev_asignado, inv.asignado_a, comentario)
         db.commit()
         return jsonify({"ok": True})
-    except SQLAlchemyError as e:
+    except Exception as e:
         db.rollback()
         return jsonify({"ok": False, "error": str(e)})
     finally:
@@ -365,7 +410,7 @@ def api_person_create():
 
     db = SessionLocal()
     try:
-        p = db.execute(select(Persona).where(Persona.nombre.ilike(nombre))).scalar_one_or_none()
+        p = db.query(Persona).filter(Persona.nombre.ilike(nombre)).first()
         if p:
             # actualizar
             p.cargo = cargo
@@ -374,7 +419,7 @@ def api_person_create():
             p.unidad_region = unidad
             p.updated_at = now_aware()
             db.commit()
-            return jsonify({"ok": True, "nombre": nombre, "updated": True})
+            return jsonify({"ok": True, "updated": True, "id": p.id, "nombre": p.nombre})
         else:
             # crear
             p = Persona(
@@ -382,13 +427,165 @@ def api_person_create():
             )
             db.add(p)
             db.commit()
-            return jsonify({"ok": True, "nombre": nombre, "updated": False})
+            db.refresh(p)  # para obtener p.id
+            return jsonify({"ok": True, "updated": False, "id": p.id, "nombre": p.nombre})
     except SQLAlchemyError as e:
         db.rollback()
         return jsonify({"ok": False, "error": str(e)})
     finally:
         db.close()
+# --------- Editar obtener ID invitacion ----------        
+@app.get("/api/invitation/<inv_id>")
+def api_invitation_get(inv_id):
+    db = SessionLocal()
+    try:
+        inv = db.get(Invitacion, inv_id)
+        if not inv:
+            return jsonify({"ok": False, "error": "No encontrada"}), 404
+        return jsonify({"ok": True, "inv": inv_to_dict(inv)})
+    finally:
+        db.close()
+@app.post("/api/invitation/update")
+def api_invitation_update():
+    data = request.get_json() or {}
+    inv_id = data.get("ID")
+    if not inv_id:
+        return jsonify({"ok": False, "error":"Falta ID"}), 400
 
+    db = SessionLocal()
+    try:
+        inv = db.get(Invitacion, inv_id)
+        if not inv:
+            return jsonify({"ok": False, "error":"No encontrada"}), 404
+
+        # guarda previos
+        prev = inv_to_dict(inv)
+        comentario = (data.get("Comentario") or "Edición de invitación").strip()
+
+        # actualiza solo lo que llegue
+        def set_if(field_key, setter):
+            if field_key in data:
+                setter(data[field_key])
+
+        set_if("Evento",              lambda v: setattr(inv, "evento", (v or "").strip()))
+        set_if("Convoca Cargo",       lambda v: setattr(inv, "convoca_cargo", (v or "").strip()))
+        set_if("Convoca",             lambda v: setattr(inv, "convoca", (v or "").strip()))
+        set_if("Partido Político",    lambda v: setattr(inv, "partido_politico", (v or "").strip()))
+        set_if("Municipio/Dependencia", lambda v: setattr(inv, "municipio", (v or "").strip()))
+        set_if("Lugar",               lambda v: setattr(inv, "lugar", (v or "").strip()))
+        set_if("Observaciones",       lambda v: setattr(inv, "observaciones", (v or "").strip()))
+        set_if("Fecha",               lambda v: setattr(inv, "fecha", dt.date.fromisoformat(v) if v else None))
+        set_if("Hora",                lambda v: setattr(inv, "hora", dt.time.fromisoformat(v) if v else None))
+
+        inv.ultima_modificacion = now_aware()
+        inv.modificado_por = "ATIapp"
+
+        # log por campo (solo si cambió)
+        cur = inv_to_dict(inv)
+        campos = [
+            ("Evento","Evento"),
+            ("Convoca Cargo","Convoca Cargo"),
+            ("Convoca","Convoca"),
+            ("Partido Político","Partido Político"),
+            ("Municipio/Dependencia","Municipio/Dependencia"),
+            ("Lugar","Lugar"),
+            ("Observaciones","Observaciones"),
+            ("Fecha","Fecha"),
+            ("Hora","Hora")
+        ]
+        for k_sheet, k in campos:
+            log_field_change(db, inv, k_sheet, prev.get(k_sheet), cur.get(k_sheet), comentario)
+
+        db.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        db.rollback()
+        return jsonify({"ok": False, "error": str(e)})
+    finally:
+        db.close()
+        
+# ================ obtener persona por id==========
+@app.get("/api/person/<int:person_id>")
+def api_person_get(person_id):
+    db = SessionLocal()
+    try:
+        p = db.query(Persona).get(person_id)
+        if not p:
+            return jsonify({"ok": False, "error": "Persona no encontrada"}), 404
+        return jsonify({
+            "ok": True,
+            "persona": {
+                "ID": p.id,
+                "Nombre": p.nombre,
+                "Cargo": p.cargo or "",
+                "Teléfono": p.telefono or "",
+                "Correo": p.correo or "",
+                "Unidad/Región": p.unidad_region or ""
+            }
+        })
+    finally:
+        db.close()
+        
+#========== editar persona
+@app.post("/api/person/update")
+def api_person_update():
+    data = request.get_json() or {}
+    pid = data.get("ID")
+    if not pid:
+        return jsonify({"ok": False, "error": "Falta ID"}), 400
+
+    db = SessionLocal()
+    try:
+        p = db.query(Persona).get(pid)
+        if not p:
+            return jsonify({"ok": False, "error": "Persona no encontrada"}), 404
+
+        cargo = (data.get("Cargo") or "").strip()
+        tel   = (data.get("Teléfono") or "").strip()
+        if not cargo:
+            return jsonify({"ok": False, "error":"El campo 'Cargo' es obligatorio"}), 400
+        if tel and (not tel.isdigit() or len(tel)!=10):
+            return jsonify({"ok": False, "error":"Teléfono debe tener 10 dígitos"}), 400
+
+        p.nombre = data.get("Nombre", p.nombre).strip()
+        p.cargo = cargo
+        p.telefono = tel
+        p.correo = (data.get("Correo") or "").strip()
+        p.unidad_region = (data.get("Unidad/Región") or "").strip()
+
+        db.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        db.rollback()
+        return jsonify({"ok": False, "error": str(e)})
+    finally:
+        db.close()
+#====== eliminar persona
+@app.post("/api/person/delete")
+def api_person_delete():
+    data = request.get_json() or {}
+    pid = data.get("ID")
+    if not pid:
+        return jsonify({"ok": False, "error": "Falta ID"}), 400
+
+    db = SessionLocal()
+    try:
+        p = db.get(Persona, int(pid))
+        if not p:
+            return jsonify({"ok": False, "error": "Persona no encontrada"}), 404
+
+        # (Opcional) Reglas de negocio:
+        # Si quisieras impedir borrar si está asignada en invitaciones activas,
+        # aquí podrías consultar invitaciones y abortar si corresponde.
+
+        db.delete(p)
+        db.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        db.rollback()
+        return jsonify({"ok": False, "error": str(e)})
+    finally:
+        db.close()
 # =========================
 #  Run
 # =========================

@@ -8,19 +8,62 @@
   <div class="col-6 col-md-3"><div class="stat"><div class="text-muted small">Canceladas</div><div class="fs-4 fw-semibold" id="kpiCanc">0</div></div></div>
 </div>
 
-<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-  <div class="btn-group" role="group" aria-label="Filtros">
-    <button class="btn btn-outline-secondary active" data-status="">Todas</button>
-    <button class="btn btn-outline-secondary" data-status="Pendiente">Pendientes</button>
-    <button class="btn btn-outline-secondary" data-status="Confirmado">Confirmadas</button>
-    <button class="btn btn-outline-secondary" data-status="Sustituido">Sustituidas</button>
-    <button class="btn btn-outline-secondary" data-status="Cancelado">Canceladas</button>
+<div class="toolbar border rounded-3 p-2 p-md-3 bg-body-tertiary mb-3">
+  <div class="d-flex flex-wrap align-items-center gap-2">
+
+    <!-- Filtro por estatus -->
+    <div class="btn-group btn-group-sm" role="group" aria-label="Filtros" id="statusBtns">
+      <button class="btn btn-outline-secondary active" data-status="">
+        <i class="bi bi-list-ul me-1"></i> Todas
+      </button>
+      <button class="btn btn-outline-secondary" data-status="Pendiente">
+        <i class="bi bi-hourglass-split me-1"></i> Pendientes
+      </button>
+      <button class="btn btn-outline-secondary" data-status="Confirmado">
+        <i class="bi bi-check2-circle me-1"></i> Confirmadas
+      </button>
+      <button class="btn btn-outline-secondary" data-status="Sustituido">
+        <i class="bi bi-arrow-left-right me-1"></i> Sustituidas
+      </button>
+      <button class="btn btn-outline-secondary" data-status="Cancelado">
+        <i class="bi bi-x-circle me-1"></i> Canceladas
+      </button>
+    </div>
+
+    <!-- Separador visual en pantallas medianas+ -->
+    <div class="vr d-none d-md-inline mx-1"></div>
+
+    <!-- Rango de fechas + acciones de filtro -->
+    <div class="d-flex align-items-end gap-2 flex-wrap">
+      <div class="input-group input-group-sm" style="width: 13rem;">
+        <span class="input-group-text"><i class="bi bi-calendar-event"></i></span>
+        <input type="date" id="fDesde" class="form-control" aria-label="Desde">
+      </div>
+      <div class="input-group input-group-sm" style="width: 13rem;">
+        <span class="input-group-text"><i class="bi bi-calendar-range"></i></span>
+        <input type="date" id="fHasta" class="form-control" aria-label="Hasta">
+      </div>
+      <button id="btnFiltrarFechas" type="button" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-funnel me-1"></i> Aplicar
+      </button>
+      <button id="btnLimpiarFechas" type="button" class="btn btn-sm btn-link">
+        Limpiar
+      </button>
+    </div>
+
+    <!-- Acciones principales (alineadas a la derecha) -->
+    <div class="ms-auto d-flex flex-wrap gap-2">
+      <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalCreate" type="button">
+        <i class="bi bi-plus-lg me-1"></i> Nueva invitación
+      </button>
+      <button id="btnExportXlsx" class="btn btn-outline-success btn-sm" type="button">
+        <i class="bi bi-file-earmark-spreadsheet me-1"></i> Exportar XLSX
+      </button>
+    </div>
+
   </div>
-  <button class="btn btn-primary ms-auto" data-bs-toggle="modal" data-bs-target="#modalCreate">Nueva invitación</button>
 </div>
-
 <div id="cards" class="row g-3"></div>
-
 <!-- Modal: Gestionar -->
 <div class="modal fade" id="modalAssign" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
@@ -136,6 +179,11 @@
           <input id="cLugar" class="form-control">
         </div>
         <div class="mt-2">
+          <label class="form-label">Archivo</label>
+          <input id="cArchivo" type="file" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+          <div id="filePreview" class="small text-muted mt-1"></div>
+        </div>
+        <div class="mt-2">
           <label class="form-label">Observaciones</label>
           <textarea id="cObs" class="form-control" rows="2"></textarea>
         </div>
@@ -171,7 +219,7 @@
         <input id="eEvento" class="form-control">
       </div>
       <div class="mt-2">
-        <label class="form-label">Quien Convoca (Cargo)</label>
+        <label class="form-label">Quien Convoca</label>
         <input id="eConvocaCargo" class="form-control">
       </div>
       <div class="mt-2">
@@ -193,6 +241,14 @@
       <div class="mt-2">
         <label class="form-label">Observaciones</label>
         <textarea id="eObs" class="form-control" rows="2"></textarea>
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Reemplazar archivo</label>
+        <input id="eArchivo" type="file" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" id="eQuitarArchivo">
+          <label class="form-check-label" for="eQuitarArchivo">Eliminar archivo existente</label>
+        </div>
       </div>
       <div class="mt-2">
         <label class="form-label">Comentario del cambio (opcional)</label>

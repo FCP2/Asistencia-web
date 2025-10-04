@@ -1,17 +1,20 @@
-// main.js — versión reestructurada (no-cache + reload tras POST)
-let catalogo = [];
-let currentStatus = "";
-let currentId = null;
-let catalogIndex = {}; // índice por nombre -> objeto
+// main.js — versión alineada con backend Postgres (persona_id + endpoints nuevos)
 
-const $  = sel => document.querySelector(sel);
-const $$ = sel => Array.from(document.querySelectorAll(sel));
+// ===== Estado global =====
+let catalogo = [];          // personas [{ID, Nombre, Cargo, ...}]
+let catalogIndex = {};      // índice por ID -> persona
+let currentStatus = "";     // filtro activo
+let currentId = null;       // invitación activa en modal gestionar
+let currentRange = { from: "", to: "" };
+
+// ===== Utils =====
+const $  = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 const coloresPartidos = {
   'MORENA':'#a50021','PAN':'#0056a4','PRI':'#0e9347','PRD':'#ffcf00',
   'PT':'#d52b1e','PVEM':'#78be20','MC':'#f58025','INDEPENDIENTE':'#888','OTRO':'#666'
 };
-
 function colorPorPartido(valor) {
   if (!valor) return 'OTRO';
   const v = valor.toUpperCase().replace(/\s+/g,'');
@@ -25,95 +28,121 @@ function colorPorPartido(valor) {
   return 'OTRO';
 }
 
-/* =========================
-   FETCH helpers (no cache)
-========================= */
+// ===== Fetch helpers (no cache) =====
 async function fetchJSON(url, opts = {}) {
   const u = new URL(url, window.location.origin);
-  // cache-buster para evitar respuestas en caché del navegador/CDN
-  u.searchParams.set('_ts', Date.now());
-  const res = await fetch(u, { cache: 'no-store', ...opts });
-  if (!res.ok) throw new Error(await res.text());
-  return await res.json();
+  u.searchParams.set('_ts', Date.now()); // cache-buster
+  const res = await fetch(u, { cache: 'no-store', credentials: 'same-origin', ...opts });
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
 }
-const apiGet  = (url)              => fetchJSON(url);
-const apiPost = (url, bodyObj={})  => fetchJSON(url, {
+const apiGet  = (url) => fetchJSON(url);
+const apiPost = (url, body={}) => fetchJSON(url, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(bodyObj)
+  body: JSON.stringify(body)
 });
 
-/* =========================
-   Utilidades UI
-========================= */
+// ===== Formateo fecha/hora (UI) =====
 function toInputDate(v) {
   if (!v) return '';
-  // acepta "YYYY-MM-DD" o "YYYY-MM-DDTHH:MM:SS"
   const s = String(v);
-  if (s.includes('T')) return s.split('T')[0];
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  // si te llega "dd/mm/yy" o "dd/mm/yyyy"
-  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
-  if (m) {
-    const yy = m[3].length === 2 ? `20${m[3]}` : m[3];
-    return `${yy}-${m[2]}-${m[1]}`;
-  }
+  if (s.includes('T')) return s.split('T')[0];           // ISO full -> fecha
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;           // YYYY-MM-DD
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);    // dd/mm/yy
+  if (m) { const yy = m[3].length === 2 ? `20${m[3]}` : m[3]; return `${yy}-${m[2]}-${m[1]}`; }
   return '';
 }
-
 function toInputTime(v) {
   if (!v) return '';
   const s = String(v);
-  // "HH:MM:SS" -> "HH:MM"
   if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s.slice(0,5);
   if (/^\d{2}:\d{2}$/.test(s)) return s;
   return '';
 }
-function getFecha(inv){ return inv.FechaFmt || inv.FechaISO || inv.Fecha || ''; }
-function getHora(inv){  return inv.HoraFmt  || inv.HoraISO  || inv.Hora  || ''; }
+function getFecha(inv){ return inv.FechaFmt || inv.Fecha || ''; }
+function getHora(inv){  return inv.HoraFmt  || inv.Hora  || ''; }
 function getUltMod(inv){ return inv.UltimaModFmt || inv["Última Modificación"] || ''; }
 function getFechaAsig(inv){ return inv.FechaAsignacionFmt || inv["Fecha Asignación"] || ''; }
 
+// ===== UI helpers =====
 function resetCreateForm() {
-  const ids = ['cFecha','cHora','cEvento','cConvoca','cPartido','cMuni','cLugar','cObs'];
+  const ids = ['cFecha','cHora','cEvento','cConvoca','cPartido','cMuni','cLugar','cObs','cConvocaCargo'];
   ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-
-  const selCargo = document.getElementById('cConvocaCargo');
-  if (selCargo) selCargo.value = '';
-
-  document.querySelectorAll('#modalCreate .is-invalid')
-    .forEach(e => e.classList.remove('is-invalid'));
+  $$('#modalCreate .is-invalid').forEach(e => e.classList.remove('is-invalid'));
 }
 async function withBusy(btn, fn){
-  btn.disabled = true;
-  btn.classList.add('disabled');
-  try { await fn(); }
-  finally {
-    btn.disabled = false;
-    btn.classList.remove('disabled');
-  }
+  btn.disabled = true; btn.classList.add('disabled');
+  try { await fn(); } finally { btn.disabled = false; btn.classList.remove('disabled'); }
 }
 async function reloadUI() {
   await load(currentStatus || "");
-  if (typeof loadCounters === "function") await loadCounters();
+  // si tienes endpoint counters, puedes llamar aquí:
+  // const counters = await apiGet('/api/counters'); ... (pero ya calculamos local)
+}
+//====filtros por fecha======
+function getRangeParams() {
+  const params = new URLSearchParams();
+  if (currentStatus) params.set('status', currentStatus);
+  if (currentRange.from) params.set('date_from', currentRange.from);
+  if (currentRange.to)   params.set('date_to', currentRange.to);
+  return params.toString() ? ('?' + params.toString()) : '';
 }
 
-/* =========================
-   Render helpers
-========================= */
+async function load(status="") {
+  currentStatus = status;
+  const qs = getRangeParams();
+  const rows = await apiGet('/api/invitations' + qs);
+
+  // pinta tarjetas
+  const cont = document.getElementById('cards');
+  cont.innerHTML = rows.map(card).join('');
+
+  // KPIs (si tienes elementos #kpiPend, etc.)
+  try {
+    const stats = await apiGet('/api/stats' + qs);
+    if (document.getElementById('kpiPend')) document.getElementById('kpiPend').textContent = stats.Pendiente ?? 0;
+    if (document.getElementById('kpiConf')) document.getElementById('kpiConf').textContent = stats.Confirmado ?? 0;
+    if (document.getElementById('kpiSubs')) document.getElementById('kpiSubs').textContent = stats.Sustituido ?? 0;
+    if (document.getElementById('kpiCanc')) document.getElementById('kpiCanc').textContent = stats.Cancelado ?? 0;
+  } catch(e) {}
+
+  adjustMainPadding && adjustMainPadding();
+}
+
+// ===== Pills estado y tarjeta =====
 function statusPill(s){
   const map = {Pendiente:"secondary", Confirmado:"success", Sustituido:"warning", Cancelado:"danger"};
   const cls = map[s] || "secondary";
   return `<span class="badge text-bg-${cls}">${s||"—"}</span>`;
 }
-
-function getFecha(inv){ return inv.FechaFmt || inv.FechaISO || ""; }
-function getHora(inv){  return inv.HoraFmt  || inv.HoraISO  || ""; }
-
 function card(inv){
   const est = statusPill(inv["Estatus"]);
+
+  // --- resaltado por proximidad ---
+  let soonClass = '';
+  let soonPill  = '';
+  const dpe = inv["DiasParaEvento"]; // número (0 = hoy, 1 = mañana, etc.)
+  // Si quieres que aplique SOLO a Confirmadas, descomenta la siguiente línea:
+  // const aplica = inv["Estatus"] === "Confirmado";
+  const aplica = true; // o déjalo en true para todos los estatus
+
+  if (aplica && typeof dpe === 'number') {
+    if (dpe === 0) {
+      soonClass = 'card-today';
+      soonPill  = `<span class="badge bg-danger-subtle text-danger-emphasis ms-2">Hoy</span>`;
+    } else if (dpe > 0 && dpe <= 2) {
+      soonClass = 'card-soon';
+      soonPill  = `<span class="badge bg-warning-subtle text-warning-emphasis ms-2">Próximo</span>`;
+    }
+  }
+
   const asignado = inv["Asignado A"]
-    ? `<span class="badge-soft">Asiste: ${inv["Asignado A"]}</span>`
+    ? `<span class="badge-soft">Asiste: ${inv["Asignado A"]} ${inv.Rol ? `(${inv.Rol})` : ''}</span>`
     : `<span class="badge-soft">Sin asignar</span>`;
 
   const partido = inv["Partido Político"] || "";
@@ -123,13 +152,24 @@ function card(inv){
     ? `<span class="badge rounded-pill me-1" style="background:${color};color:#fff;">${partido}</span>`
     : '';
 
+  const fileUrl   = inv["ArchivoURL"] || inv["archivo_url"] || inv["archivoUrl"] || "";
+  const fileName  = inv["ArchivoNombre"] || inv["archivo_nombre"] || "";
+  const clipIcon  = (window.getComputedStyle(document.documentElement) && document.querySelector('.bi'))
+                      ? `<i class="bi bi-paperclip ms-1 text-muted"></i>` : `📎`;
+  const clip = fileUrl
+    ? `<a href="${fileUrl}" target="_blank" rel="noopener" title="${fileName || 'Ver archivo'}" class="ms-1">${clipIcon}</a>`
+    : "";
+
   return `
-  <div class="col-12 col-md-6 col-xl-4">
-    <div class="card-inv p-3 h-100 d-flex flex-column">
+  <div class="col-12 col-md-6 col-xl-4 mb-4">
+    <div class="card-inv p-3 h-100 d-flex flex-column ${soonClass}">
       <div class="d-flex align-items-center gap-2 mb-1">
         <div class="mt-2">${badgePartido}</div>
-        <div class="hdr flex-grow-1">${inv["Evento"]||"Sin título"}</div>
+        <div class="hdr flex-grow-1">
+          ${inv["Evento"]||"Sin título"} ${clip}
+        </div>
         ${est}
+        ${soonPill}
       </div>
       <div class="text-muted small">${getFecha(inv)} ${getHora(inv)} • ${inv["Convoca"]||""}</div>
       <div class="text-muted small">${inv["Municipio/Dependencia"]||""}</div>
@@ -143,61 +183,44 @@ function card(inv){
     </div>
   </div>`;
 }
-
-/* =========================
-   Carga de datos
-========================= */
-  async function load(status=""){
-    currentStatus = status;
-
-    // KPIs: universo completo
-    const all = await apiGet('/api/invitations');
-    updateKpis(all);
-
-    // Filtro para tarjetas si aplica
-    const list = status ? all.filter(r => String(r.Estatus).trim() === status) : all;
-    list.sort((a,b)=> (`${b.Fecha||''} ${b.Hora||''}`).localeCompare(`${a.Fecha||''} ${a.Hora||''}`));
-    $('#cards').innerHTML = list.map(card).join('') || `<div class="text-muted">Sin registros.</div>`;
-  }
-
+function msgConflicts(level, conflicts){
+  const titulo = level === 'hard'
+    ? 'Conflicto de horario'
+    : (level === 'tight1h' ? 'Choque en ±1 hora' : 'Choque en ±2 horas');
+  const lines = conflicts.map(c => `• ${c.FechaFmt} ${c.HoraFmt} — ${c.Evento} (${c.Estatus}) @ ${c.Lugar}`).join('\n');
+  return `${titulo}:\n${lines}\n\n¿Deseas continuar de todas formas?`;
+}
+// ===== Carga catálogo (personas) =====
 async function loadCatalog() {
   catalogo = await apiGet('/api/catalog'); // [{ID, Nombre, Cargo, ...}]
   catalogIndex = {};
   const sel = $('#selPersona');
   if (sel) sel.innerHTML = '<option value="">Seleccione persona...</option>';
 
-  catalogo.forEach(r => {
-    const id = r.ID;
-    const nombre = (r.Nombre || '').trim();
-    if (!id || !nombre) return;
-    catalogIndex[id] = r;
+  catalogo.forEach(p => {
+    catalogIndex[p.ID] = p; // índice por ID
     if (sel) {
       const opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = nombre;
+      opt.value = p.ID;        // value = ID
+      opt.textContent = p.Nombre;
       sel.appendChild(opt);
     }
   });
+
+  // limpiar selección/cargo
+  if (sel) { sel.value = ''; }
+  $('#inpRol') && ($('#inpRol').value = '');
 }
 
+// ===== Carga invitaciones + KPIs =====
 
-function updateKpis(list){
-  const p = list.filter(r=>r.Estatus==='Pendiente').length;
-  const c = list.filter(r=>r.Estatus==='Confirmado').length;
-  const s = list.filter(r=>r.Estatus==='Sustituido').length;
-  const x = list.filter(r=>r.Estatus==='Cancelado').length;
-  const set = (id,val)=>{ const el = document.getElementById(id); if(el) el.textContent = val; };
-  set('kpiPend', p); set('kpiConf', c); set('kpiSubs', s); set('kpiCanc', x);
-}
 
-/* =========================
-   Eventos (clicks)
-========================= */
+// ===== Eventos (click) =====
 document.addEventListener('click', async (e)=>{
   const btn = e.target.closest('button');
   if (!btn) return;
 
-  // filtros de estado
+  // Filtros
   if (btn.matches('[data-status]')){
     $$('.btn-group [data-status]').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
@@ -205,220 +228,263 @@ document.addEventListener('click', async (e)=>{
     return;
   }
 
-  // abrir modal gestión
+  // Abrir modal Gestionar
   if (btn.dataset.action === 'assign'){
     currentId = btn.dataset.id;
-    const modal = new bootstrap.Modal($('#modalAssign'));
-    // limpia combo/cargo al abrir
+
+    // limpia campos
     $('#selPersona').value = '';
     $('#inpRol').value = '';
     $('#inpComentario').value = '';
 
+    // carga invitación para mostrar meta y, si existe, seleccionar persona actual
     try{
-      const todos = await apiGet('/api/invitations');
-      const inv = todos.find(x=>x.ID===currentId);
-      $('#assignMeta').textContent = inv ? `${inv.Evento} — ${inv.Fecha||''} ${inv.Hora||''}` : '';
-      if (inv && inv["Asignado A"]) {
-        const n = inv["Asignado A"];
-        $('#selPersona').value = n;
-        $('#inpRol').value = catalogIndex[n]?.Cargo || $('#inpRol').value;
+      const inv = await apiGet(`/api/invitation/${currentId}`);
+      $('#assignMeta').textContent = `${inv.Evento || ''} — ${getFecha(inv)} ${getHora(inv)}`;
+
+      // si el backend envía PersonaID, úsalo para seleccionar
+      if (inv.PersonaID) {
+        $('#selPersona').value = String(inv.PersonaID);
+        const p = catalogIndex[inv.PersonaID];
+        $('#inpRol').value = (inv.Rol || p?.Cargo || '');
+      } else if (inv["Asignado A"]) {
+        // fallback por nombre (si hubiera casos viejos sin PersonaID)
+        const found = catalogo.find(x => x.Nombre === inv["Asignado A"]);
+        if (found) {
+          $('#selPersona').value = String(found.ID);
+          $('#inpRol').value = inv.Rol || found.Cargo || '';
+        }
       }
     }catch{}
-    modal.show();
+
+    new bootstrap.Modal($('#modalAssign')).show();
     return;
   }
 
-  // crear invitación
-  if (btn.id === 'btnCrear'){
-    const fecha   = ($('#cFecha').value || '').trim();
-    const hora    = ($('#cHora').value || '').trim();
-    const evento  = ($('#cEvento').value || '').trim();
-    const convocaCargo = ($('#cConvocaCargo').value || '').trim();
-    const convoca = ($('#cConvoca').value || '').trim();
-    const partido = ($('#cPartido').value || '').trim();
-    const muni    = ($('#cMuni').value || '').trim();
-    const lugar   = ($('#cLugar').value || '').trim();
-    const obs     = ($('#cObs').value || '').trim();
+// Detalles
+if (btn.dataset.action === 'details'){
+  const inv = await apiGet(`/api/invitation/${btn.dataset.id}`);
 
-    if (!fecha || !hora || !evento || !convocaCargo || !convoca || !partido || !muni || !lugar) {
-      alert('Por favor, completa todos los campos obligatorios antes de crear la invitación.');
+  const lines = [
+    `<div><strong>Evento:</strong> ${inv.Evento||'—'}</div>`,
+    `<div><strong>Quien Convoca:</strong> ${inv["Convoca Cargo"]||'—'}</div>`,
+    `<div><strong>Convoca:</strong> ${inv.Convoca||'—'}</div>`,
+    `<div><strong>Partido Político:</strong> ${inv["Partido Político"]||'—'}</div>`,
+    `<div><strong>Fecha/Hora:</strong> ${getFecha(inv)} ${getHora(inv)}</div>`,
+    `<div><strong>Municipio/Dependencia:</strong> ${inv["Municipio/Dependencia"]||'—'}</div>`,
+    `<div><strong>Lugar:</strong> ${inv.Lugar||'—'}</div>`,
+    `<div><strong>Estatus:</strong> ${inv.Estatus||'—'}</div>`,
+    `<div><strong>Asiste:</strong> ${inv["Asignado A"]||'—'} ${inv.Rol ? `(${inv.Rol})` : ''}</div>`,
+    `<div><strong>Observaciones:</strong> ${inv.Observaciones||'—'}</div>`,
+    inv["Fecha Asignación"] ? `<div class="text-muted"><strong>Fecha de Asignación:</strong> ${inv["Fecha Asignación"]}</div>` : '',
+    `<div class="text-muted"><strong>Última Modificación:</strong> ${getUltMod(inv)} ${inv["Modificado Por"] ? `— <strong>Modificado Por:</strong> ${inv["Modificado Por"]}` : ''}</div>`
+  ];
+
+  // 🔗 Archivo (link + vista previa opcional)
+  if (inv.ArchivoURL) {
+    const nombre = inv.ArchivoNombre || 'Ver archivo';
+    lines.push(
+      `<div class="mt-2"><strong>Archivo:</strong> 
+         <a href="${inv.ArchivoURL}" target="_blank" rel="noopener">${nombre}</a>
+       </div>`
+    );
+
+    // Preview opcional
+    const mime = (inv.ArchivoMime || '').toLowerCase();
+    if (mime.startsWith('image/')) {
+      lines.push(
+        `<div class="mt-2"><img src="${inv.ArchivoURL}" alt="${nombre}" style="max-width:100%;border:1px solid #eee;border-radius:8px"></div>`
+      );
+    } else if (mime === 'application/pdf') {
+      lines.push(
+        `<div class="mt-2"><embed src="${inv.ArchivoURL}" type="application/pdf" width="100%" height="420px" style="border:1px solid #eee;border-radius:8px"/></div>`
+      );
+    }
+  }
+
+  $('#detailsBody').innerHTML = lines.filter(Boolean).join('');
+  new bootstrap.Modal($('#modalDetails')).show();
+  return;
+}
+
+if (btn.id === 'btnCrear'){
+  const fd = new FormData();
+  fd.append('fecha', ($('#cFecha').value || '').trim());
+  fd.append('hora',  ($('#cHora').value || '').trim());
+  fd.append('evento', ($('#cEvento').value || '').trim());
+  fd.append('convoca_cargo', ($('#cConvocaCargo').value || '').trim());
+  fd.append('convoca', ($('#cConvoca').value || '').trim());
+  fd.append('partido_politico', ($('#cPartido').value || '').trim());
+  fd.append('municipio', ($('#cMuni').value || '').trim());
+  fd.append('lugar', ($('#cLugar').value || '').trim());
+  fd.append('observaciones', ($('#cObs').value || '').trim());
+  const file = $('#cArchivo').files[0];
+  if (file) fd.append('archivo', file);
+
+  // validación (excepto observaciones)
+  const oblig = ['fecha','hora','evento','convoca_cargo','convoca','municipio','lugar'];
+  const faltan = oblig.filter(k => !fd.get(k));
+  if (faltan.length){ alert('Faltan: ' + faltan.join(', ')); return; }
+
+  try{
+    await fetch('/api/invitation/create', { method:'POST', body: fd });
+    bootstrap.Modal.getInstance($('#modalCreate')).hide();
+    await reloadUI();
+  }catch(err){
+    alert('Error al crear: ' + (err.message || 'desconocido'));
+  }
+  return;
+}
+
+// === Asignar ===
+if (btn.id === 'btnAsignar') {
+  const personaId = ($('#selPersona').value || '').trim();
+  const rol = ($('#inpRol').value || '').trim();
+  const cmt = ($('#inpComentario').value || '').trim();
+
+  await withBusy(btn, async () => {
+    if (!personaId) {
+      alert('Selecciona una persona.');
       return;
     }
 
-    const payload = {
-      "Fecha": fecha, "Hora": hora, "Evento": evento,
-      "Convoca Cargo": convocaCargo, "Convoca": convoca,
-      "Partido Político": partido, "Municipio/Dependencia": muni,
-      "Lugar": lugar, "Observaciones": obs
-    };
-
     try {
-      await apiPost('/api/create', payload);
-      bootstrap.Modal.getInstance($('#modalCreate')).hide();
+      const res = await apiPost('/api/assign', {
+        id: currentId,
+        persona_id: personaId,
+        rol,
+        comentario: cmt
+      });
+
+      // si todo bien
+      bootstrap.Modal.getInstance($('#modalAssign')).hide();
       await reloadUI();
-    } catch(err){
-      alert('Error creando invitación: ' + err.message);
-    }
-    return;
-  }
 
-  // asignar persona
-  // Asignar
-  if (btn.id === 'btnAsignar') {
-    const personaId = ($('#selPersona').value || '').trim();
-    const cargo     = ($('#inpRol').value || '').trim();
-    const cmt       = ($('#inpComentario').value || '').trim();
+    } catch (err) {
+      // Detecta conflicto 409
+      if (err.response && err.response.status === 409 && err.response.data?.conflict) {
+        const conf = err.response.data;
+        const lvl = conf.level;
+        const lista = conf.conflicts.map(
+          c => `• ${c.Evento} (${c.FechaFmt} ${c.HoraFmt}) en ${c.Lugar}`
+        ).join('\n');
 
-    await withBusy(btn, async ()=>{
-      if (!personaId) { alert('Debes seleccionar una persona.'); return; }
-      // cargo es opcional (si lo omites, el backend toma el cargo de la persona)
-      try {
-        await apiPost('/api/assign', { id: currentId, persona_id: personaId, rol: cargo, comentario: cmt });
-        bootstrap.Modal.getInstance($('#modalAssign')).hide();
-        await reloadUI();
-      } catch(err) {
-        alert('Error en asignación: ' + err.message);
+        let msg = '';
+        if (lvl === 'hard') msg = '⚠️ Conflicto total: la persona ya está confirmada en otra invitación al mismo horario.\n\n';
+        else if (lvl === 'tight1h') msg = '⏰ Atención: la persona tiene otra invitación en menos de 1 hora.\n\n';
+        else if (lvl === 'tight2h') msg = '⏰ Atención: la persona tiene otra invitación en menos de 2 horas.\n\n';
+        msg += 'Coincidencias:\n' + lista + '\n\n¿Deseas asignar de todos modos?';
+
+        if (confirm(msg)) {
+          // forzar la asignación si el usuario confirma
+          await apiPost('/api/assign', {
+            id: currentId,
+            persona_id: personaId,
+            rol,
+            comentario: cmt,
+            force: true
+          });
+          bootstrap.Modal.getInstance($('#modalAssign')).hide();
+          await reloadUI();
+        } else {
+          alert('Asignación cancelada.');
+        }
+
+      } else {
+        console.error(err);
+        alert('Error en asignación, ya se encuentra asignado ' + (err.message || 'desconocido'));
       }
-    });
-    return;
-  }
-
+    }
+  });
+  return;
+}
 
   // Sustituir
   if (btn.id === 'btnSustituir'){
     const personaId = ($('#selPersona').value || '').trim();
-    const rol       = ($('#inpRol').value || '').trim(); // opcional
-    const cmt       = ($('#inpComentario').value || '').trim();
+    const rol       = ($('#inpRol').value || '').trim();     // opcional
+    const cmt       = ($('#inpComentario').value || 'Sustitución por instrucción').trim();
 
-    if (!personaId) { alert('Debes seleccionar la nueva persona.'); return; }
-
+    if (!personaId) { alert('Selecciona la nueva persona.'); return; }
     try{
-      await apiPost('/api/reassign', { id: currentId, persona_id: personaId, rol: rol, comentario: cmt });
+      await apiPost('/api/reassign', { id: currentId, persona_id: personaId, rol, comentario: cmt });
       bootstrap.Modal.getInstance($('#modalAssign')).hide();
       await reloadUI();
-    }catch(err){
-      alert('Error al sustituir: ' + err.message);
-    }
+    }catch(err){ alert('Error al sustituir, ya se encuentra asignado ' + err.message); }
     return;
   }
 
-  // cancelar
+  // Cancelar
   if (btn.id === 'btnCancelar'){
     const cmt = $('#inpComentario').value || 'Cancelado por indicación';
-    try {
+    try{
       await apiPost('/api/cancel', { id: currentId, comentario: cmt });
       bootstrap.Modal.getInstance($('#modalAssign')).hide();
       await reloadUI();
-    } catch(err){
-      alert('Error al cancelar: ' + err.message);
-    }
+    }catch(err){ alert('Error al cancelar: ' + err.message); }
     return;
   }
 
-  // reactivar -> Pendiente
+  // Reactivar -> Pendiente
   if (btn.id === 'btnReactivar'){
     const cmt = $('#inpComentario').value || 'Reactivado';
-    try {
+    try{
       await apiPost('/api/status', { id: currentId, estatus:'Pendiente', comentario: cmt });
       bootstrap.Modal.getInstance($('#modalAssign')).hide();
       await reloadUI();
-    } catch(err){
-      alert('Error al reactivar: ' + err.message);
-    }
+    }catch(err){ alert('Error al reactivar: ' + err.message); }
     return;
   }
 
-  // eliminar
+  // Eliminar invitación
   if (btn.id === 'btnEliminar'){
     if (!confirm('¿Eliminar esta invitación? Esta acción no se puede deshacer.')) return;
-    const cmt = $('#inpComentario').value || 'Eliminación solicitada desde dashboard';
     try{
-      await apiPost('/api/delete', { id: currentId, comentario: cmt });
+      await apiPost('/api/invitation/delete', { id: currentId });
       bootstrap.Modal.getInstance($('#modalAssign')).hide();
       await reloadUI();
-    }catch(err){ alert('Error al eliminar: '+err.message); }
+    }catch(err){ alert('Error al eliminar: ' + err.message); }
     return;
   }
 
-  // detalles
-// detalles
-  if (btn.dataset.action === 'details'){
-    const todos = await apiGet('/api/invitations');
-    const inv = todos.find(x => x.ID === btn.dataset.id);
-    if (!inv) { alert('No se encontró la invitación.'); return; }
-
-    const fechaTxt = getFecha(inv);
-    const horaTxt  = getHora(inv);
-    const fAsign   = getFechaAsig(inv);
-    const fUlt     = getUltMod(inv);
-
-    const lines = [
-      `<div><strong>Evento:</strong> ${inv.Evento || '—'}</div>`,
-      `<div><strong>Quien Convoca (Cargo):</strong> ${inv["Convoca Cargo"] || '—'}</div>`,
-      `<div><strong>Convoca:</strong> ${inv.Convoca || '—'}</div>`,
-      `<div><strong>Partido Político:</strong> ${inv["Partido Político"] || '—'}</div>`,
-      `<div><strong>Fecha/Hora:</strong> ${fechaTxt} ${horaTxt}</div>`,
-      `<div><strong>Municipio/Dependencia:</strong> ${inv["Municipio/Dependencia"] || '—'}</div>`,
-      `<div><strong>Lugar:</strong> ${inv.Lugar || '—'}</div>`,
-      `<div><strong>Estatus:</strong> ${inv.Estatus || '—'}</div>`,
-      `<div><strong>Asiste:</strong> ${inv["Asignado A"] || '—'} ${inv.Rol ? `(${inv.Rol})` : ''}</div>`,
-      `<div><strong>Observaciones:</strong> ${inv.Observaciones || '—'}</div>`,
-      fAsign ? `<div class="text-muted"><strong>Fecha de Asignación:</strong> ${fAsign}</div>` : '',
-      `<div class="text-muted"><strong>Última Modificación:</strong> ${fUlt} ${inv["Modificado Por"] ? `— <strong>Modificado Por:</strong> ${inv["Modificado Por"]}` : ''}</div>`
-    ].filter(Boolean);
-
-    $('#detailsBody').innerHTML = lines.join('');
-    new bootstrap.Modal($('#modalDetails')).show();
+  // Abrir modal "Nueva persona"
+  if (btn.id === 'btnOpenNewPersona') {
+    $('#npNombre').value = '';
+    $('#npCargo').value = '';
+    $('#npTelefono').value = '';
+    $('#npCorreo').value = '';
+    $('#npUnidad').value = '';
+    new bootstrap.Modal($('#modalNewPersona')).show();
     return;
   }
 
-// Abrir modal "Nueva persona"
-if (btn.id === 'btnOpenNewPersona') {
-  // limpiar campos
-  $('#npNombre').value = '';
-  $('#npCargo').value = '';
-  $('#npTelefono').value = '';
-  $('#npCorreo').value = '';
-  $('#npUnidad').value = '';
-  new bootstrap.Modal($('#modalNewPersona')).show();
-  return;
-}
+  // Guardar persona nueva
+  if (btn.id === 'btnGuardarPersona') {
+    const nombre = ($('#npNombre').value || '').trim();
+    const cargo  = ($('#npCargo').value || '').trim();
+    const tel    = ($('#npTelefono').value || '').trim();
+    const correo = ($('#npCorreo').value || '').trim();
+    const unidad = ($('#npUnidad').value || '').trim();
 
-// Guardar persona (usa tu endpoint /api/person/create que ya devuelve ID)
-if (btn.id === 'btnGuardarPersona') {
-  const nombre = ($('#npNombre').value || '').trim();
-  const cargo  = ($('#npCargo').value || '').trim();
-  const tel    = ($('#npTelefono').value || '').trim();
-  const correo = ($('#npCorreo').value || '').trim();
-  const unidad = ($('#npUnidad').value || '').trim();
+    if (!nombre) { alert('El Nombre es obligatorio.'); return; }
+    if (!cargo)  { alert('El Cargo es obligatorio.'); return; }
+    if (tel && !/^\d{10}$/.test(tel)) { alert('El teléfono debe tener 10 dígitos.'); return; }
 
-  if (!nombre) { alert('El Nombre es obligatorio.'); return; }
-  if (!cargo)  { alert('El Cargo es obligatorio.'); return; }
-  if (tel && !/^\d{10}$/.test(tel)) { alert('El teléfono debe tener 10 dígitos.'); return; }
-
-  try {
-    const res = await apiPost('/api/person/create', {
-      Nombre: nombre, Cargo: cargo, Teléfono: tel, Correo: correo, 'Unidad/Región': unidad
-    });
-    if (!res.ok && !res.id) { alert(res.error || 'No se pudo guardar'); return; }
-
-    // refresca catálogo y selecciona automáticamente a la persona creada
-    await loadCatalog();
-    if ($('#selPersona')) {
-      $('#selPersona').value = String(res.id);
-      $('#inpRol').value = cargo; // autocompleta cargo
-    }
-
-    // cierra modal y avisa
-    bootstrap.Modal.getInstance($('#modalNewPersona')).hide();
-    // opcional: await reloadUI();
-  } catch (err) {
-    alert('Error guardando persona: ' + err.message);
+    try {
+      const res = await apiPost('/api/person/create', {
+        Nombre: nombre, Cargo: cargo, 'Teléfono': tel, Correo: correo, 'Unidad/Región': unidad
+      });
+      await loadCatalog();
+      if ($('#selPersona')) {
+        $('#selPersona').value = String(res.id);
+        $('#inpRol').value = cargo;
+      }
+      bootstrap.Modal.getInstance($('#modalNewPersona')).hide();
+    } catch (err) { alert('Error guardando persona: ' + err.message); }
+    return;
   }
-  return;
-}
 
-  // cancelar creación de nueva persona
+  // Cancelar nueva persona (si usas collapse)
   if (btn.id === 'btnCancelarPersona') {
     $('#npNombre').value = '';
     $('#npCargo').value = '';
@@ -426,22 +492,18 @@ if (btn.id === 'btnGuardarPersona') {
     $('#npCorreo').value = '';
     $('#npUnidad').value = '';
     const collapseEl = document.querySelector('#newPerson');
-    const clp = bootstrap.Collapse.getOrCreateInstance(collapseEl);
-    clp.hide();
+    if (collapseEl) bootstrap.Collapse.getOrCreateInstance(collapseEl).hide();
     return;
   }
-  //editar invitacion
+
+  // Editar invitación (abrir modal)
   if (btn.dataset.action === 'edit-inv') {
     currentId = btn.dataset.id;
-    // carga la invitación
-    const res = await fetchJSON(`/api/invitation/${currentId}`);
-    if (!res.ok && !res.inv) { alert(res.error || 'No se pudo cargar'); return; }
-    const inv = res.inv;
+    const inv = await apiGet(`/api/invitation/${currentId}`);
 
-    // Rellena el modal de edición
     $('#eID').value = inv.ID;
-    $('#eFecha').value = inv.FechaISO || '';
-    $('#eHora').value  = inv.HoraISO  || ''
+    $('#eFecha').value = toInputDate(inv.Fecha || '');
+    $('#eHora').value  = toInputTime(inv.Hora  || '');
     $('#eEvento').value = inv.Evento || '';
     $('#eConvocaCargo').value = inv["Convoca Cargo"] || '';
     $('#eConvoca').value = inv.Convoca || '';
@@ -449,63 +511,60 @@ if (btn.id === 'btnGuardarPersona') {
     $('#eMuni').value = inv["Municipio/Dependencia"] || '';
     $('#eLugar').value = inv.Lugar || '';
     $('#eObs').value = inv.Observaciones || '';
-     // 👇 aquí debes usar la conversión a ISO
-    $("#eFecha").value = toInputDate(inv.FechaISO || inv.Fecha || "");
-    $("#eHora").value  = toInputTime(inv.HoraISO  || inv.Hora  || "");
 
     new bootstrap.Modal($('#modalEditInv')).show();
     return;
   }
-  if (btn.id === 'btnGuardarEditInv') {
-    const payload = {
-      ID: $('#eID').value,
-      Fecha: $('#eFecha').value,
-      Hora: $('#eHora').value,
-      Evento: $('#eEvento').value,
-      "Convoca Cargo": $('#eConvocaCargo').value,
-      Convoca: $('#eConvoca').value,
-      "Partido Político": $('#ePartido').value,
-      "Municipio/Dependencia": $('#eMuni').value,
-      Lugar: $('#eLugar').value,
-      Observaciones: $('#eObs').value,
-      Comentario: $('#eComentario').value || "Edición de invitación"
-    };
 
-    // Validación mínima (igual que crear)
-    const oblig = ["Fecha","Hora","Evento","Convoca Cargo","Convoca","Partido Político","Municipio/Dependencia","Lugar"];
-    for (const k of oblig) {
-      if (!payload[k] || !payload[k].trim()) {
-        alert(`Falta ${k}`);
-        return;
-      }
-    }
+if (btn.id === 'btnGuardarEditInv') {
+  const fd = new FormData();
+  fd.append('id', ($('#eID').value || '').trim());
+  fd.append('fecha', ($('#eFecha').value || '').trim());
+  fd.append('hora',  ($('#eHora').value || '').trim());
+  fd.append('evento', ($('#eEvento').value || '').trim());
+  fd.append('convoca_cargo', ($('#eConvocaCargo').value || '').trim());
+  fd.append('convoca', ($('#eConvoca').value || '').trim());
+  fd.append('partido_politico', ($('#ePartido').value || '').trim());
+  fd.append('municipio', ($('#eMuni').value || '').trim());
+  fd.append('lugar', ($('#eLugar').value || '').trim());
+  fd.append('observaciones', ($('#eObs').value || '').trim());
+  if ($('#eQuitarArchivo').checked) fd.append('eliminar_archivo', 'true');
+  const newFile = $('#eArchivo').files[0];
+  if (newFile) fd.append('archivo', newFile);
 
-    try {
-      await apiPost('/api/invitation/update', payload);
-      bootstrap.Modal.getInstance($('#modalEditInv')).hide();
-      await reloadUI();
-    } catch (err) {
-      alert('Error actualizando: ' + err.message);
-    }
-    return;
+  // validación igual que en crear...
+  const oblig = ['fecha','hora','evento','convoca_cargo','convoca','municipio','lugar'];
+  for (const k of oblig) {
+    if (!fd.get(k) || !String(fd.get(k)).trim()) { alert(`Falta ${k}`); return; }
   }
-  //acciones editar persona
+
+  try {
+    await fetch('/api/invitation/update', { method:'POST', body: fd });
+    bootstrap.Modal.getInstance($('#modalEditInv')).hide();
+    await reloadUI();
+  } catch (err) { alert('Error actualizando: ' + (err.message || 'desconocido')); }
+  return;
+}
+
+  // Editar persona (abrir modal, SIN pedir al backend)
   if (btn.id === 'btnEditarPersona') {
     const pid = $('#selPersona').value;
     if (!pid) { alert('Selecciona una persona primero'); return; }
+    const p = catalogIndex[pid];
+    if (!p) { alert('Persona no encontrada en catálogo'); return; }
 
-    const res = await fetchJSON(`/api/person/${pid}`);
-    const p = res.persona;
     $('#epID').value = p.ID;
-    $('#epNombre').value = p.Nombre;
-    $('#epCargo').value = p.Cargo;
-    $('#epTelefono').value = p['Teléfono'];
-    $('#epCorreo').value = p.Correo;
-    $('#epUnidad').value = p['Unidad/Región'];
+    $('#epNombre').value = p.Nombre || '';
+    $('#epCargo').value = p.Cargo || '';
+    $('#epTelefono').value = p['Teléfono'] || '';
+    $('#epCorreo').value = p.Correo || '';
+    $('#epUnidad').value = p['Unidad/Región'] || '';
 
     new bootstrap.Modal($('#modalEditPersona')).show();
+    return;
   }
 
+  // Guardar edición de persona
   if (btn.id === 'btnGuardarEditPersona') {
     const payload = {
       ID: $('#epID').value,
@@ -515,99 +574,148 @@ if (btn.id === 'btnGuardarPersona') {
       Correo: $('#epCorreo').value,
       'Unidad/Región': $('#epUnidad').value
     };
-    await apiPost('/api/person/update', payload);
-    bootstrap.Modal.getInstance($('#modalEditPersona')).hide();
-    await loadCatalog(); // refresca catálogo
+    try {
+      await apiPost('/api/person/update', payload);
+      bootstrap.Modal.getInstance($('#modalEditPersona')).hide();
+      await loadCatalog(); // refresca combo
+    } catch (err) { alert('Error actualizando persona: ' + err.message); }
+    return;
   }
+
+  // Abrir modal Eliminar persona
   if (btn.id === 'btnOpenDeletePersona') {
-  // Rellenar el select con el catálogo actual (ID como value)
-  const sel = $('#delPersonaSelect');
-  sel.innerHTML = '<option value="">Seleccione persona...</option>';
-  for (const p of catalogo) {
-    const opt = document.createElement('option');
-    opt.value = p.ID;             // 👈 value = ID
-    opt.textContent = p.Nombre;   // 👈 texto visible
-    sel.appendChild(opt);
-  }
-  new bootstrap.Modal($('#modalDeletePersona')).show();
-  return;
-}
-if (btn.id === 'btnEliminarPersonaConfirm') {
-  const pid = ($('#delPersonaSelect').value || '').trim();
-  if (!pid) { alert('Selecciona una persona.'); return; }
-
-  const persona = catalogIndex[pid]?.Nombre || 'esta persona';
-  if (!confirm(`¿Eliminar definitivamente a ${persona}?`)) return;
-
-  try {
-    await apiPost('/api/person/delete', { ID: pid });
-
-    // Cierra modal
-    bootstrap.Modal.getInstance($('#modalDeletePersona')).hide();
-
-    // Guarda el seleccionado actual antes de recargar
-    const sel = $('#selPersona');
-    const selectedBefore = sel ? sel.value : '';
-
-    // Recarga catálogo (reconstruye #selPersona y catalogIndex)
-    await loadCatalog();
-
+    const sel = $('#delPersonaSelect');
     if (sel) {
-      // Si la persona eliminada era la seleccionada, limpia ambos
-      if (selectedBefore === pid) {
-        sel.value = '';
-        $('#inpRol').value = '';
-      } else {
-        // Si hay algo seleccionado, recalcula el cargo desde el nuevo catalogIndex
-        if (sel.value && catalogIndex[sel.value]) {
+      sel.innerHTML = '<option value="">Seleccione persona...</option>';
+      for (const p of catalogo) {
+        const opt = document.createElement('option');
+        opt.value = p.ID;
+        opt.textContent = p.Nombre;
+        sel.appendChild(opt);
+      }
+    }
+    new bootstrap.Modal($('#modalDeletePersona')).show();
+    return;
+  }
+
+  // Confirmar eliminar persona
+  if (btn.id === 'btnEliminarPersonaConfirm') {
+    const pid = ($('#delPersonaSelect').value || '').trim();
+    if (!pid) { alert('Selecciona una persona.'); return; }
+
+    const persona = (catalogIndex[pid] || {}).Nombre || 'esta persona';
+    if (!confirm(`¿Eliminar definitivamente a ${persona}?`)) return;
+
+    try {
+      await apiPost('/api/person/delete', { ID: pid });
+      bootstrap.Modal.getInstance($('#modalDeletePersona')).hide();
+
+      // recordaba selección previa
+      const sel = $('#selPersona');
+      const before = sel ? sel.value : '';
+
+      await loadCatalog(); // reconstruye catálogo y select
+
+      if (sel) {
+        if (before && !catalogIndex[before]) { // selección era la eliminada
+          sel.value = '';
+          $('#inpRol').value = '';
+        } else if (sel.value && catalogIndex[sel.value]) {
           $('#inpRol').value = catalogIndex[sel.value].Cargo || '';
         } else {
-          // No hay selección válida -> limpia
           sel.value = '';
           $('#inpRol').value = '';
         }
+        sel.dispatchEvent(new Event('change'));
       }
-
-      // Opcional: dispara change para que cualquier listener dependiente se ejecute
-      sel.dispatchEvent(new Event('change'));
-    }
-
-    // Opcional: refrescar tarjetas si quieres
-    // await reloadUI();
-
-    alert('Persona eliminada.');
-  } catch (err) {
-    alert('Error al eliminar: ' + err.message);
+      await reloadUI();
+      // opcional: await reloadUI();
+      alert('Persona eliminada.');
+    } catch (err) { alert('Error al eliminar: ' + err.message); }
+    return;
   }
-  return;
-}
+
+  if (btn.id === 'btnFiltrarFechas') {
+    currentRange.from = (document.getElementById('fDesde').value || '').trim();
+    currentRange.to   = (document.getElementById('fHasta').value || '').trim();
+    await load(currentStatus);
+    return;
+  }
+
+  if (btn.id === 'btnLimpiarFechas') {
+    currentRange.from = "";
+    currentRange.to   = "";
+    document.getElementById('fDesde').value = "";
+    document.getElementById('fHasta').value = "";
+    await load(currentStatus);
+    return;
+  }
 });
 
-/* =========================
-   DOM Ready
-========================= */
+// ===== Inputs =====
+$('#selPersona')?.addEventListener('change', () => {
+  const pid = $('#selPersona').value;
+  const info = catalogIndex[pid];
+  $('#inpRol').value = info?.Cargo || '';
+});
+
+// ===== DOM Ready =====
 document.addEventListener('DOMContentLoaded', async ()=>{
-  await loadCatalog();
-  await load("");
+  try {
+    await loadCatalog();
+    await load("");
+  } catch (err) {
+    console.error(err);
+    alert('No se pudo cargar la app: ' + err.message);
+  }
 
-  // Autorelleno cargo al cambiar persona
-  $('#selPersona')?.addEventListener('change', () => {
-    const pid = $('#selPersona').value;     // ahora devuelve el ID
-    const info = catalogIndex[pid];
-    $('#inpRol').value = info?.Cargo || '';
-  });
-
-  // Reset modal Nueva Invitación
-  const modalEl = document.getElementById('modalCreate');
-  if (modalEl) {
-    modalEl.addEventListener('show.bs.modal', () => {
+  // Modal crear: preparar / limpiar
+  const modalCreate = $('#modalCreate');
+  if (modalCreate) {
+    modalCreate.addEventListener('show.bs.modal', () => {
       resetCreateForm();
-      const f = document.getElementById('cFecha');
+      const f = $('#cFecha');
       if (f) f.valueAsDate = new Date(); // opcional: hoy por defecto
     });
-    modalEl.addEventListener('hidden.bs.modal', () => resetCreateForm());
+    modalCreate.addEventListener('hidden.bs.modal', resetCreateForm);
   }
 
-  // (Opcional) Auto-refresh cada 15s:
+  // (Opcional) Auto-refresh cada X segundos
   // setInterval(reloadUI, 15000);
 });
+
+document.getElementById('cArchivo').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    document.getElementById('filePreview').textContent = `Seleccionado: ${file.name}`;
+  } else {
+    document.getElementById('filePreview').textContent = '';
+  }
+});
+
+function adjustMainPadding() {
+  const footer = document.getElementById('footerBar');
+  const main = document.querySelector('main');
+  if (!footer || !main) return;
+  // deja un colchón adicional de 24 px
+  main.style.paddingBottom = (footer.offsetHeight + 24) + 'px';
+}
+
+window.addEventListener('load', adjustMainPadding);
+window.addEventListener('resize', adjustMainPadding);
+// si cargas tarjetas por AJAX, vuelve a ajustar después de renderizarlas:
+async function reloadUI() {
+  await load(window.currentStatus || "");
+  adjustMainPadding();
+}
+
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('button');
+  if (!btn) return;
+  if (btn.id === 'btnExportXlsx') {
+    window.location.href = '/api/report/confirmados.xlsx';
+  }
+});
+
+
+

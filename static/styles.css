@@ -1,5 +1,24 @@
+body {
+  height: 100%;
+  margin: 0;
+}
+
+/* Mantiene el footer fijo visible */
+.navbar.fixed-bottom {
+  z-index: 1030;
+}
+html {
+  scroll-behavior: smooth; /* movimiento suave al hacer scroll */
+}
+
+main::after {
+  content: "";
+  display: block;
+  height: 6rem;  /* espacio visual adicional al final */
+  background: linear-gradient(to top, rgba(255,255,255,0.9), transparent);
+}
 .card-inv {
-  border:1px solid #e7e7ea;
+  border:1px solid #99999a;
   border-radius:16px;
   background:#fff;
   transition:box-shadow .2s;
@@ -24,3 +43,36 @@
   border-radius:12px;
   padding:.75rem 1rem;
 }
+.bi-paperclip {
+  font-size: 1rem;
+  transition: color 0.2s ease;
+}
+.bi-paperclip:hover {
+  color: #9f2241 !important;
+}
+
+.card-soon {
+  box-shadow: 0 0 0 2px rgba(255,193,7,.35); /* amarillo suave */
+}
+
+.card-today {
+  box-shadow: 0 0 0 2px rgba(220,53,69,.35); /* rojo suave */
+}
+
+/* Compacta la barra y homologa alturas */
+.toolbar .btn,
+.toolbar .form-control,
+.toolbar .input-group-text { height: 32px; }
+
+.toolbar .input-group-text {
+  background: transparent;
+  border-right: 0;
+}
+.toolbar .input-group .form-control { border-left: 0; }
+
+/* En móviles, que los grupos compartan todo el ancho si es necesario */
+@media (max-width: 576px) {
+  #statusBtns { width: 100%; }
+}
+#connBadge{transition:all .2s;}
+#connBadge.offline{background:#dc3545 !important;}

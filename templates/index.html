@@ -33,43 +33,24 @@
                 <select id="selPersona" class="form-select"></select>
             </div>
             <hr class="my-3">
-            <div class="d-flex align-items-center gap-2 mb-2">
-                <strong class="me-auto">¿No está en la lista?</strong>
-                <button class="btn btn-sm btn-outline-primary" 
-                        type="button" data-bs-toggle="collapse" data-bs-target="#newPerson">
-                    Agregar nueva persona
+            <div class="d-flex align-items-center mb-2">
+              <!-- Acciones principales -->
+              <div class="btn-group me-2">
+                <button id="btnEditarPersona" class="btn btn-sm btn-outline-info">
+                  <i class="bi bi-pencil-square me-1"></i> Editar
                 </button>
-            </div>
+                <button id="btnOpenDeletePersona" class="btn btn-sm btn-outline-danger">
+                  <i class="bi bi-trash me-1"></i> Eliminar
+                </button>
+              </div>
 
-            <div class="collapse" id="newPerson">
-                <div class="border rounded p-2">
-                    <div class="row g-2">
-                    <div class="col-12">
-                        <label class="form-label">Nombre</label>
-                        <input id="npNombre" class="form-control" placeholder="Nombre completo">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">Cargo</label>
-                        <input id="npCargo" class="form-control" placeholder="Cargo">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">Teléfono</label>
-                        <input id="npTelefono" class="form-control" placeholder="10 dígitos">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">Correo</label>
-                        <input id="npCorreo" type="email" class="form-control" placeholder="correo@dominio.com">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">Secretaría/Unidad</label>
-                        <input id="npUnidad" class="form-control" placeholder="Secretaría o Unidad">
-                    </div>
-                    </div>
-                    <div class="mt-2 d-flex justify-content-end gap-2">
-                    <button id="btnCancelarPersona" class="btn btn-outline-secondary btn-sm">Cancelar</button>
-                    <button id="btnGuardarPersona" class="btn btn-success btn-sm">Guardar persona</button>
-                    </div>
-                </div>
+              <!-- Acciones secundarias alineadas a la derecha -->
+              <div class="ms-auto d-flex align-items-center gap-2">
+                <small class="text-muted">¿No está en la lista?</small>
+                <button id="btnOpenNewPersona" class="btn btn-sm btn-outline-primary">
+                  <i class="bi bi-plus-circle me-1"></i> Agregar
+                </button>
+              </div>
             </div>
             <div class="mb-2">
                 <label class="form-label">Cargo</label>
@@ -164,5 +145,157 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- Modal: Editar invitación -->
+<div class="modal fade" id="modalEditInv" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title">Editar invitación</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="eID">
+      <div class="row g-2">
+        <div class="col-6">
+          <label class="form-label">Fecha</label>
+          <input id="eFecha" type="date" class="form-control">
+        </div>
+        <div class="col-6">
+          <label class="form-label">Hora</label>
+          <input id="eHora" type="time" class="form-control">
+        </div>
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Evento</label>
+        <input id="eEvento" class="form-control">
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Quien Convoca (Cargo)</label>
+        <input id="eConvocaCargo" class="form-control">
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Convoca</label>
+        <input id="eConvoca" class="form-control">
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Partido Político</label>
+        <input id="ePartido" class="form-control">
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Municipio/Dependencia</label>
+        <input id="eMuni" class="form-control">
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Lugar</label>
+        <input id="eLugar" class="form-control">
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Observaciones</label>
+        <textarea id="eObs" class="form-control" rows="2"></textarea>
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Comentario del cambio (opcional)</label>
+        <input id="eComentario" class="form-control" placeholder="Ej. corrección de sede / horario">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="btnGuardarEditInv" class="btn btn-warning">Guardar cambios</button>
+    </div>
+  </div></div>
+</div>
+
+  <!-- Modal: Editar persona -->
+  <div class="modal fade" id="modalEditPersona" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog"><div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Editar persona</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Hidden ID -->
+        <input type="hidden" id="epID">
+
+        <div class="mb-2">
+          <label class="form-label">Nombre</label>
+          <input id="epNombre" class="form-control" readonly>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Cargo</label>
+          <input id="epCargo" class="form-control" required>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Teléfono</label>
+          <input id="epTelefono" class="form-control" placeholder="10 dígitos">
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Correo</label>
+          <input id="epCorreo" type="email" class="form-control">
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Unidad/Región</label>
+          <input id="epUnidad" class="form-control">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnGuardarEditPersona" class="btn btn-info">Guardar cambios</button>
+      </div>
+    </div></div>
+  </div>
+  <!-- Modal: Eliminar persona -->
+  <div class="modal fade" id="modalDeletePersona" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog"><div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Eliminar persona</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label class="form-label">Persona a eliminar</label>
+          <select id="delPersonaSelect" class="form-select"></select>
+        </div>
+        <div class="alert alert-warning small mb-0">
+          Esta acción es <strong>permanente</strong>. 
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnEliminarPersonaConfirm" class="btn btn-danger">Eliminar</button>
+      </div>
+    </div></div>
+  </div>
+  <!-- Modal: Nueva persona -->
+<div class="modal fade" id="modalNewPersona" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title">Agregar nueva persona</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <div class="mb-2">
+        <label class="form-label">Nombre</label>
+        <input id="npNombre" class="form-control" required>
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Cargo</label>
+        <input id="npCargo" class="form-control" required>
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Teléfono</label>
+        <input id="npTelefono" class="form-control" placeholder="10 dígitos">
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Correo</label>
+        <input id="npCorreo" type="email" class="form-control">
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Unidad/Región</label>
+        <input id="npUnidad" class="form-control">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="btnCancelarPersona" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+      <button id="btnGuardarPersona" class="btn btn-primary">Guardar</button>
+    </div>
+  </div></div>
 </div>
 {% endblock %}

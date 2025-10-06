@@ -117,6 +117,9 @@ def minutes_diff(t1: Optional[dtime], t2: Optional[dtime]) -> int:
 def inv_to_dict(inv: Invitacion) -> dict:
     # días hacia el evento (para highlight en UI)
     dias = (inv.fecha - date.today()).days if inv.fecha else None
+    # nombre vivo desde la relación (si existe), si no, cae al texto desnormalizado:
+    asignado_nombre = (inv.persona.nombre if getattr(inv, "persona", None) and inv.persona else None) \
+                      or (inv.asignado_a or "")
 
     return {
         "ID": inv.id,
@@ -137,8 +140,8 @@ def inv_to_dict(inv: Invitacion) -> dict:
         "Municipio/Dependencia": inv.municipio or "",
         "Lugar": inv.lugar or "",
         "Estatus": inv.estatus or "Pendiente",
-        "Asignado A": inv.asignado_a or "",
-        "Rol": inv.rol or "",
+        "Asignado A": asignado_nombre,         # <— AQUÍ
+        "PersonaNombre": (inv.persona.nombre if inv.persona else None),  # opcional, por claridad        "Rol": inv.rol or "",
         "Observaciones": inv.observaciones or "",
         "Fecha Asignación": fmt_dt(inv.fecha_asignacion),
         "Última Modificación": fmt_dt(inv.ultima_modificacion),
@@ -251,6 +254,7 @@ def api_person_create():
         db.close()
 
 @app.post("/api/person/update")
+@app.post("/api/person/update")
 def api_person_update():
     data = request.get_json() or {}
     pid = data.get("ID")
@@ -263,20 +267,19 @@ def api_person_update():
         if not p:
             return jsonify({"ok": False, "error": "Persona no encontrada"}), 404
 
-        # Actualiza campos si vienen
         for key, attr in [
             ("Nombre", "nombre"),
             ("Cargo", "cargo"),
             ("Teléfono", "telefono"),
             ("Correo", "correo"),
-            ("Unidad/Región", "unidad_region")
+            ("Unidad/Región", "unidad_region"),
         ]:
             val = data.get(key)
             if val is not None:
                 setattr(p, attr, val.strip() if isinstance(val, str) else val)
 
         db.commit()
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "persona": {"ID": p.id, "Nombre": p.nombre}})
     except Exception as e:
         db.rollback()
         return jsonify({"ok": False, "error": str(e)}), 500

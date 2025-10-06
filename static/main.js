@@ -6,7 +6,7 @@ let catalogIndex = {};      // índice por ID -> persona
 let currentStatus = "";     // filtro activo
 let currentId = null;       // invitación activa en modal gestionar
 let currentRange = { from: "", to: "" };
-
+let personaTS = null;
 // ===== Utils =====
 const $  = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -96,8 +96,10 @@ function getRangeParams() {
 async function load(status="") {
   currentStatus = status;
   const qs = getRangeParams();
-  const rows = await apiGet('/api/invitations' + qs);
-
+  //matar proxy
+  const buster = `_ts=${Date.now()}`;
+  const sep = qs ? '&' : '?';
+  const rows  = await apiGet('/api/invitations' + qs, { cache: 'no-store' });
   // pinta tarjetas
   const cont = document.getElementById('cards');
   cont.innerHTML = rows.map(card).join('');
@@ -127,9 +129,7 @@ function card(inv){
   let soonClass = '';
   let soonPill  = '';
   const dpe = inv["DiasParaEvento"]; // número (0 = hoy, 1 = mañana, etc.)
-  // Si quieres que aplique SOLO a Confirmadas, descomenta la siguiente línea:
-  // const aplica = inv["Estatus"] === "Confirmado";
-  const aplica = true; // o déjalo en true para todos los estatus
+  const aplica = true; // si quieres limitar a Confirmado, cámbialo
 
   if (aplica && typeof dpe === 'number') {
     if (dpe === 0) {
@@ -141,8 +141,10 @@ function card(inv){
     }
   }
 
-  const asignado = inv["Asignado A"]
-    ? `<span class="badge-soft">Asiste: ${inv["Asignado A"]} ${inv.Rol ? `(${inv.Rol})` : ''}</span>`
+  // Nombre actualizado: primero PersonaNombre, luego Asignado A, si no, vacío
+  const nombreAsignado = inv["PersonaNombre"] || inv["Asignado A"] || "";
+  const asignado = nombreAsignado
+    ? `<span class="badge-soft">Asiste: ${nombreAsignado} ${inv.Rol ? `(${inv.Rol})` : ''}</span>`
     : `<span class="badge-soft">Sin asignar</span>`;
 
   const partido = inv["Partido Político"] || "";
@@ -192,24 +194,35 @@ function msgConflicts(level, conflicts){
 }
 // ===== Carga catálogo (personas) =====
 async function loadCatalog() {
-  catalogo = await apiGet('/api/catalog'); // [{ID, Nombre, Cargo, ...}]
-  catalogIndex = {};
-  const sel = $('#selPersona');
-  if (sel) sel.innerHTML = '<option value="">Seleccione persona...</option>';
+  let data = [];
+  try {
+    data = await apiGet('/api/catalog', { cache: 'no-store' });
+  } catch (e) {}
+  if (!Array.isArray(data) || !data.length) {
+    try { data = await apiGet('/api/persons', { cache: 'no-store' }); } catch (e) {}
+  }
 
-  catalogo.forEach(p => {
-    catalogIndex[p.ID] = p; // índice por ID
+  catalogo = Array.isArray(data) ? data : [];
+  catalogIndex = {};
+
+  const sel = $('#selPersona');
+  if (sel) {
+    // opción vacía para permitir placeholder/escritura
+    sel.innerHTML = '<option value=""></option>';
+  }
+
+  for (const p of catalogo) {
+    catalogIndex[p.ID] = p;
     if (sel) {
       const opt = document.createElement('option');
-      opt.value = p.ID;        // value = ID
-      opt.textContent = p.Nombre;
+      opt.value = String(p.ID);
+      opt.textContent = p.Nombre || '';
       sel.appendChild(opt);
     }
-  });
+  }
 
-  // limpiar selección/cargo
-  if (sel) { sel.value = ''; }
-  $('#inpRol') && ($('#inpRol').value = '');
+  // limpia cargo
+  const rol = $('#inpRol'); if (rol) rol.value = '';
 }
 
 // ===== Carga invitaciones + KPIs =====
@@ -230,36 +243,80 @@ document.addEventListener('click', async (e)=>{
 
   // Abrir modal Gestionar
   if (btn.dataset.action === 'assign'){
-    currentId = btn.dataset.id;
+  currentId = btn.dataset.id;
 
-    // limpia campos
-    $('#selPersona').value = '';
-    $('#inpRol').value = '';
-    $('#inpComentario').value = '';
+  // limpia campos visibles
+  $('#inpRol').value = '';
+  $('#inpComentario').value = '';
 
-    // carga invitación para mostrar meta y, si existe, seleccionar persona actual
-    try{
-      const inv = await apiGet(`/api/invitation/${currentId}`);
-      $('#assignMeta').textContent = `${inv.Evento || ''} — ${getFecha(inv)} ${getHora(inv)}`;
-
-      // si el backend envía PersonaID, úsalo para seleccionar
-      if (inv.PersonaID) {
-        $('#selPersona').value = String(inv.PersonaID);
-        const p = catalogIndex[inv.PersonaID];
-        $('#inpRol').value = (inv.Rol || p?.Cargo || '');
-      } else if (inv["Asignado A"]) {
-        // fallback por nombre (si hubiera casos viejos sin PersonaID)
-        const found = catalogo.find(x => x.Nombre === inv["Asignado A"]);
-        if (found) {
-          $('#selPersona').value = String(found.ID);
-          $('#inpRol').value = inv.Rol || found.Cargo || '';
-        }
-      }
-    }catch{}
-
-    new bootstrap.Modal($('#modalAssign')).show();
-    return;
+  // asegúrate de tener catálogo cargado
+  if (!window.catalogo || !window.catalogo.length) {
+    await loadCatalog();
   }
+
+  // trae invitación para preselección
+  let preselectPersonaId = null;
+  try{
+    const inv = await apiGet(`/api/invitation/${currentId}`, { cache: 'no-store' });
+    $('#assignMeta').textContent = `${inv.Evento || ''} — ${getFecha(inv)} ${getHora(inv)}`;
+    preselectPersonaId = inv.PersonaID || null;
+  }catch{}
+
+  const modalEl = $('#modalAssign');
+
+  modalEl.addEventListener('shown.bs.modal', function onShown(){
+    modalEl.removeEventListener('shown.bs.modal', onShown);
+
+    // destruye instancia previa
+    if (personaTS) { try { personaTS.destroy(); } catch {} personaTS = null; }
+
+    // ⭐ NO limpies #selPersona aquí — ya tiene <option> del catálogo
+
+    personaTS = new TomSelect('#selPersona', {
+      searchField: ['text'],
+      dropdownParent: modalEl.querySelector('.modal-content'), // dentro del modal
+      openOnFocus: false,             // ⭐ NO abrir al enfocar
+      allowEmptyOption: true,
+      maxOptions: 1000
+    });
+
+    // al cambiar, actualiza cargo
+    personaTS.on('change', (val) => {
+      const p = window.catalogIndex?.[val] || null;
+      $('#inpRol').value = p?.Cargo || '';
+    });
+
+    // ⭐ abrir/cerrar SOLO al escribir
+    personaTS.on('type', (str) => {
+      if (str && str.length >= 1) personaTS.open();
+      else personaTS.close();
+    });
+
+    // ⭐ si enfoca sin escribir, mantenlo cerrado
+    personaTS.on('focus', () => personaTS.close());
+
+    // preselección si aplica
+    if (preselectPersonaId != null) {
+      personaTS.setValue(String(preselectPersonaId), true);
+      const p = window.catalogIndex?.[preselectPersonaId];
+      $('#inpRol').value = p?.Cargo || '';
+    } else {
+      personaTS.clear(true);
+    }
+
+    // ⭐ SOLO foco al input (sin abrir)
+    setTimeout(() => {
+      try {
+        personaTS.control_input?.setAttribute('placeholder','Escribe para buscar…');
+        personaTS.control_input?.focus();
+        // NO personaTS.open();
+      } catch {}
+    }, 40);
+  }, { once:true });
+
+  new bootstrap.Modal(modalEl).show();
+  return;
+}
 
 // Detalles
 if (btn.dataset.action === 'details'){

@@ -76,3 +76,12 @@ main::after {
 }
 #connBadge{transition:all .2s;}
 #connBadge.offline{background:#dc3545 !important;}
+/* Oculta el <select> original cuando TS lo envuelve */
+#selPersona.ts-hidden-accessible { display: none !important; }
+#selPersona + .ts-wrapper { width: 100%; }
+
+/* Dropdown dentro del modal y con scroll */
+#modalAssign .ts-dropdown { z-index: 2000; max-height: 260px; overflow: auto; }
+
+/* Asegura que el caret/input sean visibles para escribir */
+.ts-control input { display: inline-block !important; min-width: 2ch; }

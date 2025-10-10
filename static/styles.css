@@ -85,3 +85,4 @@ main::after {
 
 /* Asegura que el caret/input sean visibles para escribir */
 .ts-control input { display: inline-block !important; min-width: 2ch; }
+#groupDip, #groupPres { margin-bottom: .5rem; }

@@ -69,7 +69,69 @@ function getHora(inv){  return inv.HoraFmt  || inv.Hora  || ''; }
 function getUltMod(inv){ return inv.UltimaModFmt || inv["Última Modificación"] || ''; }
 function getFechaAsig(inv){ return inv.FechaAsignacionFmt || inv["Fecha Asignación"] || ''; }
 
+// Normaliza el valor de "Convoca Cargo"
+function normCargo(v){
+  const s = String(v || "").toLowerCase().trim();
+  if (!s) return "";
+  if (s.includes("diputad")) return "dip";          // “Diputadas y Diputados”
+  if (s.includes("president")) return "pres";       // “Presidentas y Presidentes Municipales”
+  return "otros";                                    // por si a futuro hay más
+}
+
+// Renderiza una lista de invitaciones en un contenedor
+function renderListInto(list, containerSel){
+  const cont = document.querySelector(containerSel);
+  if (!cont) return;
+  cont.innerHTML = list.map(card).join("") || `<div class="text-muted">Sin registros</div>`;
+}
+
+// Actualiza contadores por grupo
+function updateGroupCounters(list){
+  const dip = list.filter(i => normCargo(i["Convoca Cargo"]) === "dip").length;
+  const pres= list.filter(i => normCargo(i["Convoca Cargo"]) === "pres").length;
+  const elDip  = document.querySelector("#cntDip");
+  const elPres = document.querySelector("#cntPres");
+  if (elDip)  elDip.textContent  = dip;
+  if (elPres) elPres.textContent = pres;
+}
 // ===== UI helpers =====
+// Normaliza para evitar duplicados tipo "TOLUCA", "Toluca ", "Tolucá"
+function normalizeMunicipio(s){
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,''); // quita acentos
+}
+
+function getMuni(inv){
+  return String(inv["Municipio/Dependencia"] || "").trim();
+}
+
+// Llena el <select> con municipios únicos del conjunto actual
+function populateMunicipios(invs){
+  const sel = document.getElementById('fMuni');
+  if (!sel) return;
+
+  // Mapa normalizado → forma original (primera aparición)
+  const map = new Map();
+  for (const inv of invs){
+    const raw = getMuni(inv);
+    if (!raw) continue;
+    const key = normalizeMunicipio(raw);
+    if (!map.has(key)) map.set(key, raw.trim());
+  }
+
+  // Ordena por forma original
+  const uniq = Array.from(map.values()).sort((a,b)=>a.localeCompare(b,'es'));
+
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Todos los municipios</option>' +
+                  uniq.map(m => `<option value="${m}">${m}</option>`).join('');
+
+  // restaura selección si sigue existiendo
+  if (prev && uniq.includes(prev)) sel.value = prev;
+}
+
 function resetCreateForm() {
   const ids = ['cFecha','cHora','cEvento','cConvoca','cPartido','cMuni','cLugar','cObs','cConvocaCargo'];
   ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -79,42 +141,72 @@ async function withBusy(btn, fn){
   btn.disabled = true; btn.classList.add('disabled');
   try { await fn(); } finally { btn.disabled = false; btn.classList.remove('disabled'); }
 }
-async function reloadUI() {
-  await load(currentStatus || "");
-  // si tienes endpoint counters, puedes llamar aquí:
-  // const counters = await apiGet('/api/counters'); ... (pero ya calculamos local)
-}
-//====filtros por fecha======
-function getRangeParams() {
-  const params = new URLSearchParams();
-  if (currentStatus) params.set('status', currentStatus);
-  if (currentRange.from) params.set('date_from', currentRange.from);
-  if (currentRange.to)   params.set('date_to', currentRange.to);
-  return params.toString() ? ('?' + params.toString()) : '';
+let uiToken = 0;
+
+async function reloadUI(){
+  const my = ++uiToken;
+
+  // 1) status activo
+  const status = document.querySelector('#statusBtns .btn.active')?.dataset.status || "";
+  let invs = await apiGet('/api/invitations' + (status ? `?status=${encodeURIComponent(status)}` : ''));
+  if (my !== uiToken) return;
+
+  // 2) filtrar por fechas
+  const d1 = (document.getElementById('fDesde')?.value || '').trim(); // YYYY-MM-DD
+  const d2 = (document.getElementById('fHasta')?.value || '').trim();
+  if (d1 || d2){
+    invs = invs.filter(inv => {
+      const iso = inv.Fecha;
+      if (!iso) return false;
+      if (d1 && iso < d1) return false;
+      if (d2 && iso > d2) return false;
+      return true;
+    });
+  }
+
+  // 3) (NUEVO) poblar opciones de municipio según el set actual
+  populateMunicipios(invs);
+
+  // 4) (NUEVO) filtrar por municipio si hay selección
+  const muniSel = (document.getElementById('fMuni')?.value || '').trim();
+  if (muniSel){
+    invs = invs.filter(inv => getMuni(inv) === muniSel);
+  }
+
+  // 5) limpiar contenedores
+  const dipCont  = document.getElementById('groupDip');
+  const presCont = document.getElementById('groupPres');
+  if (dipCont)  dipCont.innerHTML = "";
+  if (presCont) presCont.innerHTML = "";
+
+  // 6) separar por Convoca Cargo
+  const dipList  = invs.filter(inv => normCargo(inv["Convoca Cargo"]) === "dip");
+  const presList = invs.filter(inv => normCargo(inv["Convoca Cargo"]) === "pres");
+
+  // 7) pintar
+  renderListInto(dipList,  "#groupDip");
+  renderListInto(presList, "#groupPres");
+
+  // 8) KPIs sobre la lista final filtrada
+  const kpi = { Pendiente:0, Confirmado:0, Sustituido:0, Cancelado:0 };
+  invs.forEach(i => { const e = i.Estatus || "Pendiente"; if (kpi[e] != null) kpi[e]++; });
+  const set = (id,val)=>{ const el=document.querySelector(id); if(el) el.textContent=val; };
+  set('#kpiPend', kpi.Pendiente);
+  set('#kpiConf', kpi.Confirmado);
+  set('#kpiSubs', kpi.Sustituido);
+  set('#kpiCanc', kpi.Cancelado);
+
+  updateGroupCounters(invs);
+  if (typeof adjustMainPadding === 'function') adjustMainPadding();
 }
 
-async function load(status="") {
-  currentStatus = status;
-  const qs = getRangeParams();
-  //matar proxy
-  const buster = `_ts=${Date.now()}`;
-  const sep = qs ? '&' : '?';
-  const rows  = await apiGet('/api/invitations' + qs, { cache: 'no-store' });
-  // pinta tarjetas
-  const cont = document.getElementById('cards');
-  cont.innerHTML = rows.map(card).join('');
-
-  // KPIs (si tienes elementos #kpiPend, etc.)
-  try {
-    const stats = await apiGet('/api/stats' + qs);
-    if (document.getElementById('kpiPend')) document.getElementById('kpiPend').textContent = stats.Pendiente ?? 0;
-    if (document.getElementById('kpiConf')) document.getElementById('kpiConf').textContent = stats.Confirmado ?? 0;
-    if (document.getElementById('kpiSubs')) document.getElementById('kpiSubs').textContent = stats.Sustituido ?? 0;
-    if (document.getElementById('kpiCanc')) document.getElementById('kpiCanc').textContent = stats.Cancelado ?? 0;
-  } catch(e) {}
-
-  adjustMainPadding && adjustMainPadding();
-}
+document.querySelector('#statusBtns')?.addEventListener('click', async (e)=>{
+  const btn = e.target.closest('button[data-status]');
+  if (!btn) return;
+  document.querySelectorAll('#statusBtns .btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  await reloadUI();
+});
 
 // ===== Pills estado y tarjeta =====
 function statusPill(s){
@@ -193,6 +285,7 @@ function msgConflicts(level, conflicts){
   return `${titulo}:\n${lines}\n\n¿Deseas continuar de todas formas?`;
 }
 // ===== Carga catálogo (personas) =====
+// ===== Carga catálogo (personas) =====
 async function loadCatalog() {
   let data = [];
   try {
@@ -238,11 +331,13 @@ document.addEventListener('click', async (e)=>{
     $$('.btn-group [data-status]').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     await load(btn.dataset.status || "");
+    await reloadUI();
     return;
   }
 
-  // Abrir modal Gestionar
-  if (btn.dataset.action === 'assign'){
+  // Abrir modal Gestionar (OPCIÓN B)
+// Handler: Abrir modal Gestionar (opción B: escribir directo en el control)
+if (btn.dataset.action === 'assign'){
   currentId = btn.dataset.id;
 
   // limpia campos visibles
@@ -317,7 +412,6 @@ document.addEventListener('click', async (e)=>{
   new bootstrap.Modal(modalEl).show();
   return;
 }
-
 // Detalles
 if (btn.dataset.action === 'details'){
   const inv = await apiGet(`/api/invitation/${btn.dataset.id}`);
@@ -633,6 +727,7 @@ if (btn.id === 'btnGuardarEditInv') {
     };
     try {
       await apiPost('/api/person/update', payload);
+      await load(currentStatus); // <- vuelve a pedir /api/invitations con el rango/estatus activo
       bootstrap.Modal.getInstance($('#modalEditPersona')).hide();
       await loadCatalog(); // refresca combo
     } catch (err) { alert('Error actualizando persona: ' + err.message); }
@@ -695,7 +790,7 @@ if (btn.id === 'btnGuardarEditInv') {
   if (btn.id === 'btnFiltrarFechas') {
     currentRange.from = (document.getElementById('fDesde').value || '').trim();
     currentRange.to   = (document.getElementById('fHasta').value || '').trim();
-    await load(currentStatus);
+    await reloadUI();
     return;
   }
 
@@ -704,7 +799,30 @@ if (btn.id === 'btnGuardarEditInv') {
     currentRange.to   = "";
     document.getElementById('fDesde').value = "";
     document.getElementById('fHasta').value = "";
-    await load(currentStatus);
+    const muniSel = document.getElementById('fMuni');
+    if (muniSel) muniSel.value = "";
+
+    await reloadUI();
+    return;
+  }
+  // En tu gran listener de clicks:
+  if (btn && btn.id === 'btnLimpiar') {
+    if (!currentId) { alert('No hay invitación seleccionada.'); return; }
+
+    const ok = confirm('Esto devolverá la invitación a "Pendiente" y limpiará la persona asignada. ¿Continuar?');
+    if (!ok) return;
+
+    try {
+      await apiPost('/api/status', {
+        id: currentId,
+        estatus: 'Pendiente',
+        comentario: 'Limpieza de asignación por corrección'
+      });
+      bootstrap.Modal.getInstance($('#modalAssign')).hide();
+      await reloadUI();
+    } catch (err) {
+      alert('No se pudo limpiar la asignación: ' + (err?.response?.data?.error || err.message));
+    }
     return;
   }
 });
@@ -720,7 +838,7 @@ $('#selPersona')?.addEventListener('change', () => {
 document.addEventListener('DOMContentLoaded', async ()=>{
   try {
     await loadCatalog();
-    await load("");
+    await reloadUI();
   } catch (err) {
     console.error(err);
     alert('No se pudo cargar la app: ' + err.message);
@@ -736,7 +854,8 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     });
     modalCreate.addEventListener('hidden.bs.modal', resetCreateForm);
   }
-
+  try { await loadCatalog(); } catch(e) { console.warn('No se pudo cargar catálogo', e); }
+  
   // (Opcional) Auto-refresh cada X segundos
   // setInterval(reloadUI, 15000);
 });
@@ -761,10 +880,10 @@ function adjustMainPadding() {
 window.addEventListener('load', adjustMainPadding);
 window.addEventListener('resize', adjustMainPadding);
 // si cargas tarjetas por AJAX, vuelve a ajustar después de renderizarlas:
-async function reloadUI() {
-  await load(window.currentStatus || "");
-  adjustMainPadding();
-}
+//async function reloadUI() {
+  //await load(window.currentStatus || "");
+ // adjustMainPadding();
+//}
 
 document.addEventListener('click', (ev) => {
   const btn = ev.target.closest('button');

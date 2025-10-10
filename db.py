@@ -124,6 +124,7 @@ class Notificacion(Base):
     hora              = Column(Time)      # 👈
     municipio         = Column(Text)      # 👈
     lugar             = Column(Text)      # 👈
+    convoca_cargo     = Column(String)  # 👈 nuevo
 
     # Envío del bot
     enviado           = Column(Boolean, default=False)

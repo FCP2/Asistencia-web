@@ -182,7 +182,7 @@ def add_notif(db: Session, inv: Invitacion, campo: str, old_val: str | None, new
         hora = inv.hora,
         municipio = inv.municipio or "",
         lugar = inv.lugar or "",
-
+        convoca_cargo=inv.convoca_cargo,
         enviado = False,
         enviado_ts = None
     )
@@ -253,7 +253,6 @@ def api_person_create():
     finally:
         db.close()
 
-@app.post("/api/person/update")
 @app.post("/api/person/update")
 def api_person_update():
     data = request.get_json() or {}
@@ -742,30 +741,47 @@ def api_reassign():
 
 @app.post("/api/status")
 def api_status():
-    """Cambiar estatus libremente (Pendiente/Confirmado/Sustituido/Cancelado)."""
     data = request.get_json() or {}
     inv_id = data.get("id")
-    nuevo = (data.get("estatus") or "").strip()
+    nuevo = (data.get("estatus") or "").strip()  # Pendiente, Confirmado, Sustituido, Cancelado
     comentario = (data.get("comentario") or "Cambio de estatus").strip()
-
-    if not inv_id or not nuevo:
-        return jsonify({"ok": False, "error": "Faltan campos: id, estatus"}), 400
+    if not (inv_id and nuevo):
+        return jsonify({"ok": False, "error": "Faltan campos"}), 400
 
     db = SessionLocal()
     try:
         inv = db.get(Invitacion, int(inv_id))
         if not inv:
-            return jsonify({"ok": False, "error": "Invitación no encontrada"}), 404
+            return jsonify({"ok": False, "error": "ID no encontrado"}), 404
 
         prev_estatus = inv.estatus
+        prev_asig    = inv.asignado_a or ""
+        prev_rol     = inv.rol or ""
 
         inv.estatus = nuevo
-        inv.ultima_modificacion = datetime.now()
-        inv.modificado_por = "atiapp"
+        inv.ultima_modificacion = datetime.utcnow()
+        inv.modificado_por = "webapp"
+
+        # Si regresamos a Pendiente, limpiamos los campos de asignación
+        if nuevo == "Pendiente":
+            inv.persona_id = None
+            inv.asignado_a = ""
+            inv.rol = ""
+            inv.fecha_asignacion = None
+            # opcional: también limpiar observaciones si quieres:
+            # inv.observaciones = ""
+
+        # Agrega comentario a observaciones (opcional)
         if comentario:
             inv.observaciones = ((inv.observaciones or "") + (" | " if inv.observaciones else "") + comentario)
 
-        add_notif(db, inv, "Estatus", prev_estatus or "", nuevo or "", comentario)
+        # Notificaciones (snapshots)
+        add_notif(db, inv, "Estatus", prev_estatus or "", inv.estatus or "", comentario)
+        if nuevo == "Pendiente":
+            if prev_asig:
+                add_notif(db, inv, "Asignado A", prev_asig, "", "Se limpió la asignación")
+            if prev_rol:
+                add_notif(db, inv, "Rol", prev_rol, "", "Se limpió la asignación")
 
         db.commit()
         return jsonify({"ok": True})
@@ -906,6 +922,7 @@ def report_confirmados_xlsx():
             "Fecha",
             "Lugar",
             "Hora",
+            "Convoca Cargo",
         ]
         ws.append(headers)
 
@@ -922,6 +939,7 @@ def report_confirmados_xlsx():
                 _fmt_date(inv.fecha),
                 inv.lugar or "",
                 _fmt_time(inv.hora),
+                inv.convoca_cargo or "",
             ])
 
         # Encabezado bonito, autofiltro, freeze panes y ancho de columnas
@@ -966,6 +984,14 @@ def api_counters():
         return jsonify(counts)
     finally:
         db.close()
+
+@app.after_request
+def add_no_store(resp):
+    if request.path.startswith('/api/'):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+    return resp
         
 @app.get("/api/health")
 def api_health():

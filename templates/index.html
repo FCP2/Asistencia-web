@@ -43,6 +43,14 @@
         <span class="input-group-text"><i class="bi bi-calendar-range"></i></span>
         <input type="date" id="fHasta" class="form-control" aria-label="Hasta">
       </div>
+            <!-- Municipio -->
+      <div class="input-group input-group-sm" style="width: 18rem;">
+        <span class="input-group-text"><i class="bi bi-geo-alt"></i></span>
+        <select id="fMuni" class="form-select">
+          <option value="">Todos los municipios</option>
+          <!-- Se llena dinámicamente -->
+        </select>
+      </div>
       <button id="btnFiltrarFechas" type="button" class="btn btn-sm btn-outline-primary">
         <i class="bi bi-funnel me-1"></i> Aplicar
       </button>
@@ -63,6 +71,21 @@
 
   </div>
 </div>
+<!-- Grupos por Convoca Cargo -->
+<div class="mb-2 d-flex align-items-center gap-2">
+  <h5 class="m-0">Diputadas y Diputados</h5>
+  <span id="cntDip" class="badge rounded-pill bg-secondary">0</span>
+</div>
+<div id="groupDip" class="row"></div>
+
+<hr class="my-3">
+
+<div class="mb-2 d-flex align-items-center gap-2">
+  <h5 class="m-0">Presidentas y Presidentes Municipales</h5>
+  <span id="cntPres" class="badge rounded-pill bg-secondary">0</span>
+</div>
+<div id="groupPres" class="row"></div>
+
 <div id="cards" class="row g-3"></div>
 <!-- Modal: Gestionar -->
 <div class="modal fade" id="modalAssign" tabindex="-1" aria-hidden="true">
@@ -108,9 +131,11 @@
       <div class="modal-footer">
         <button id="btnAsignar" class="btn btn-primary">Asignar</button>
         <button id="btnSustituir" class="btn btn-outline-warning">Sustituir</button>
-        <button id="btnCancelar" class="btn btn-outline-danger">Cancelar</button>
-        <button id="btnReactivar" class="btn btn-outline-secondary">Reactivar</button>
+        <button id="btnLimpiar" class="btn btn-outline-secondary">Limpiar asignación</button>
+        <!--<button id="btnCancelar" class="btn btn-outline-danger">Cancelar</button>-->
+        <!--<button id="btnReactivar" class="btn btn-outline-secondary">Reactivar</button>-->
         <button id="btnEliminar" class="btn btn-danger ms-auto">Eliminar</button>
+        
       </div>
     </div>
   </div>
@@ -274,7 +299,7 @@
 
         <div class="mb-2">
           <label class="form-label">Nombre</label>
-          <input id="epNombre" class="form-control" required>
+          <input id="epNombre" class="form-control"required>
         </div>
         <div class="mb-2">
           <label class="form-label">Cargo</label>
